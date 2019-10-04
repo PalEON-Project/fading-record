@@ -124,5 +124,3 @@ abline(0,1,col="red",lwd=3)
 bias.fit = lm(crec_mat[,3] ~ prec_mat[,3])
 abline(bias.fit,col=3,lty=2,lwd=2)
 
-plot(frec_mat[,3],crec_mat[,3],main="ab")
-abline(0,1,col="red",lwd=3)
