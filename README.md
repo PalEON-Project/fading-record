@@ -11,4 +11,5 @@ This script tests the tree cloning method to "correct" the paleon sampling which
 PalEON tree-ring fading record correction using Empirical Succession Mapping (ESM)
 
 1. First step is to extract ESM phase space data from FIA database : fia_extract.R 
-2. ...
+2. Fit allometries and prepare the AB lookup table : estimate_fia_ab.R
+3. ...

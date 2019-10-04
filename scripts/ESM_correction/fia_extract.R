@@ -213,9 +213,9 @@ db.getShowQueries <- function() {
 
 
 
-file.pft = "../..data/spcd2pft.csv"
-file.normal = "../..data/ESM.rds"
-file.fading = "../..data/ESM_F.rds"
+file.pft = "../../data/spcd2pft.csv"
+file.normal = "../../data/ESM.rds"
+file.fading = "../../data/ESM_F.rds"
 
 fia_extract(file.normal, file.pft)
 fia_extract(file.fading, file.pft, fading_record = TRUE)
