@@ -12,4 +12,6 @@ PalEON tree-ring fading record correction using Empirical Succession Mapping (ES
 
 1. First step is to extract ESM phase space data from FIA database : fia_extract.R 
 2. Fit allometries and prepare the AB lookup table : estimate_fia_ab.R
-3. ...
+3. You can plot backward ESM vectors with biomass curves: plotting_ESM4PalEON.R
+![](figures/ESM_with_abcurves.png)
+4. ...
