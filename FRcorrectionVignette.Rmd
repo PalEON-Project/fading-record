@@ -243,7 +243,7 @@ ESM CIs are too wide, looks like anything can happen. One can try different (or 
 One other thing I tried was to store and track mean trajectory only. I do this by setting `mean_only = TRUE`, then in step 4 of the algorithm instead of storing all nneigh plots individually, I take their mean, store and use that as the next starting point. This is not what we agreed initially, but as we are now thinking about something-that-works-but-not-perfect, this approach also could be played with. Here is the CIs using this setup (no threshold, 150 nearest neighbours):
 ![](figures/polygons2.png)
 
-In my opinion, this looks more promising. Again we can try different `th` and/or `nneigh` values to see how this changes. I chose 150 nearest neighbours because the gray vectors in the background are plotted by binning FIA data and each bin has at least 100 plots (bin.min.n = 100). So main trends only appear if you are looking >100 plots? I haven't tried the other approach with 150 neighbours because then it gets reeeally slow. Maybe site specific scaling can also be applied with this setup now. 
+I feel like, this looks more promising. Again we can try different `th` and/or `nneigh` values to see how this changes. I chose 150 nearest neighbours because the gray vectors in the background are plotted by binning FIA data and each bin has at least 100 plots (bin.min.n = 100). So main trends only appear if you are looking >100 plots? I haven't tried the other approach with 150 neighbours because then it gets reeeally slow. Maybe site specific scaling can also be applied with this setup now. 
 ![](figures/diagnostic2.png)
 
 
