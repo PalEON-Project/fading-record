@@ -4,10 +4,15 @@ library(PEcAn.allometry)
 
 ####################################### Read data in #######################################
 
-file.in.normal = ".../ESM.rds"
-file.in.fading = ".../ESM_F_survivalonly.rds"
-file.in.model  = ".../HF_PREDS_tree_iter_25June2019.RDS"
+file.in.normal = "/fs/data3/istfer/fading-record/data/ESM.rds"
+file.in.fading = "/fs/data3/istfer/fading-record/data/ESM_F.rds"
+file.in.model  = "/fs/data3/istfer/fia_esm/scripts/fading_record/HF_PREDS_tree_iter_25June2019.RDS"
 
+fia_to_paleon   <- read.table("/fs/data3/istfer/fia_esm/scripts/fading_record/new_version/fia_to_level3a_v0.5.csv", heade = TRUE, sep="\t")
+chojnacky_table <- read.table("/fs/data3/istfer/fia_esm/scripts/fading_record/new_version/level3a_to_chojnacky_v0.2.csv", header = TRUE, sep = "\t")
+
+#load ab lut table
+load("/fs/data3/istfer/fia_esm/scripts/fading_record/new_version/ab_lut.Rdata")
 
 # --- read in FIA DB query
 # read in ESM 
@@ -15,6 +20,7 @@ q = as.data.table(readRDS(file.in.normal))
 # read in ESM fading record scenario 
 w = as.data.table(readRDS(file.in.fading))
 
+# making sure NAs are accounted for 
 sumNA  = function(x) sum(x,na.rm=T)
 meanNA = function(x) mean(x,na.rm=T)
 q[, PREVTPAsum     := sumNA(start1tpa), by=PLT_CN                 ]  # "startsumTPA"
@@ -48,8 +54,49 @@ w[, prevdiamean.m := prevdiamean * 2.54      ]
 w[, tpasum.m      := tpasum      / 0.404686  ]
 w[, prevtpasum.m  := prevtpasum  / 0.404686  ]
 
-fia_to_paleon   <- read.table(".../fia_to_level3a_v0.5.csv", heade = TRUE, sep="\t")
-chojnacky_table <- read.table(".../level3a_to_chojnacky_v0.2.csv", header = TRUE, sep = "\t")
+# --- Binning
+
+x.lim = c(10,50) 
+y.lim = c(0,2000) 
+
+dia.bin   = 2.5
+dia.lim   = c(0,50)
+
+tpa.bin   = 100
+tpa.lim   = c(0,1500)
+
+bin.min.n = 100
+
+q[, prevdiabin   := ceiling(prevdiamean.m/dia.bin)*dia.bin       ]
+w[, prevdiabin   := ceiling(prevdiamean.m/dia.bin)*dia.bin       ]
+
+q[, prevstockbin := ceiling(prevtpasum.m/tpa.bin)*tpa.bin  ]
+w[, prevstockbin := ceiling(prevtpasum.m/tpa.bin)*tpa.bin  ]
+
+q[, prevdiastockbin := paste(prevdiabin,prevstockbin,sep='_')]
+w[, prevdiastockbin := paste(prevdiabin,prevstockbin,sep='_')]
+
+w$prevdiastockbin <- q$prevdiastockbin
+
+# --- Bin means
+binmean = function(x) {
+  if(length(x)<bin.min.n) {
+    return(NULL)
+  } else {
+    return(mean(x, na.rm=T))
+  }
+}
+meanB = q[, .(binmean(prevdiamean.m),binmean(diamean.m),
+              binmean(prevtpasum.m),binmean(tpasum.m)), by=prevdiastockbin]
+
+meanD = w[, .(binmean(prevdiamean.m),binmean(diamean.m),
+              binmean(prevtpasum.m),binmean(tpasum.m)), by=prevdiastockbin]
+
+setnames(meanB, c("bin","prevdiameanB","diameanB","prevtpasumB","tpasumB"))
+setnames(meanD, c("bin","prevdiameanD","diameanD","prevtpasumD","tpasumD"))
+meanB
+meanD
+
 
 # there isn't any, but filter out plots that don't have FIA spcd
 q <- q[!(q$plt_cn %in% unique(q$plt_cn[is.na(q$spcd)])),]
@@ -65,8 +112,13 @@ q$paleon <- plyr::mapvalues(q$spcd, fia_to_paleon$fia_spcd, as.character(fia_to_
 # read in PalEON tree-ring model for Harvard Forest
 hf_rec <- readRDS(file.in.model)
 
+
+
+# LABEL SMALL TREES IN THE INNER CIRCLE
+
 years <- 2012:1961
 
+# Working with 3rd sub-plot first, but could be expanded to all HF plots
 site_id <- 3
 
 hf_census <- hf_rec[hf_rec$model == "Model RW + Census" & hf_rec$plot == site_id, ]
@@ -113,23 +165,22 @@ outer_ring_area <- ((pi*20^2) / 10000) - inner_circle_area
 
 
 
-########### explore 
-# crec : census recrd
+########### Correct PalEON sampling and calculate dbh, dens, ab for each year under each iteration 
+# crec : census record
 # frec : fading record
 
 # in this loop we apply cutoff and clone small trees to the outer circle
-frec <- crec <- outsmall <- list()
-i <- y <- 1 
+frec <- crec <- list()
+#i <- y <- 1 
 for( i in 1:250){
   frec[[i]] <- crec[[i]] <- matrix(NA,ncol= 3, nrow= length(years))
-  outsmall[[i]] <- rep(NA, length(years))
-  
+
   for( y in seq_along(years)){
     
-    # extract current and previous year from the PalEON tree ring only model
+    # extract current year from the PalEON tree ring only model for iteration i
     cur_f <- hf_tronly[hf_tronly$year == years[y] & hf_tronly$iter == i, ]
     
-    # extract current and previous year from the PalEON tree ring + census model (validation)
+    # extract current year from the PalEON tree ring + census model (validation) for iteration i
     cur <- hf_census[hf_census$year == years[y] & hf_census$iter == i, ]
     
     cur_f <- cur_f[complete.cases(cur_f),]
@@ -139,22 +190,21 @@ for( i in 1:250){
     cur <- cur[cur$dbh >= 5*2.54, ]
     cur_f <- cur_f[cur_f$dbh >= 5*2.54, ]
     
-    #print(sum((cur_f$dist_census > 13 & cur_f$dbh < 20)))
-    # cur_f <- cur_f[!(cur_f$dist_census > 13 & cur_f$dbh < 20), ]
-    
     iter_df <- cur_f
-    small_trees <-  iter_df[(cur_f$dist_census < 13 & cur_f$small == 1),]
-    #print(sum((cur_f$dist_census < 13 & cur_f$dbh < 20)))
-    #small_trees <-  iter_df[iter_df$small == 1, ]
+    # get the small trees
+    small_trees <-  iter_df[(iter_df$dist_census < 13 & iter_df$small == 1),]
+
+    # how many trees should we clone to the outer ring
     x_trees <- ceiling(outer_ring_area* nrow(small_trees) /inner_circle_area)
     #print(x_trees)
-    outsmall[[i]][y] <- sum(cur_f$dist_census > 13) - x_trees
-    x_ind <- sample(1:nrow(small_trees), x_trees, replace = TRUE)
     
+    # clone small trees, add them to the plot
+    x_ind <- sample(1:nrow(small_trees), x_trees, replace = TRUE)
     iter_df <- rbind(iter_df, small_trees[x_ind,])
     
+    # calculate the mean dbh, dens, ab for year y and iteration i
     fdbh <- mean(iter_df$dbh)
-    cdbh <- mean(cur$dbh)
+    cdbh <- mean(cur$dbh) # didn't do anything, this is the real plot census without paleon sampling
     
     fab <- sum(iter_df$ab) * 1e-03 / ((pi*20^2) / 10000)
     cab <- sum(cur$ab)* 1e-03 / ((pi*20^2) / 10000)
@@ -228,35 +278,30 @@ update_ab <- function(these_plots_cur, esm, sfc){
   return(corrected_mat)
 }
 
-pal_tronly <- matrix(NA,nrow=250,ncol=length(years))
-pal_tr_cen <- matrix(NA,nrow=250,ncol=length(years))
-radd <- 50
-th <- 5
-th2 <- 0.5
 
-corrected_ab <- list()
-
-#load ab lut table
-load(".../ab_lut.Rdata")
 
 #normalize
 ab_lut_norm <- ab_lut
 mins <- apply(ab_lut[,2:4], 2, min)
 maxs <- apply(ab_lut[,2:4], 2, max)
-ab_lut_norm[,2] <- (ab_lut_norm[,2] - mins[1])/ (maxs[1]-mins[1])
-ab_lut_norm[,3] <- (ab_lut_norm[,3] - mins[2]) / (maxs[2]-mins[2])
-ab_lut_norm[,4] <- (ab_lut_norm[,4] - mins[3]) / (maxs[3]-mins[3])
+ab_lut_norm[,2] <- (ab_lut_norm[,2] - mins[1]) / (maxs[1]-mins[1]) #dbh
+ab_lut_norm[,3] <- (ab_lut_norm[,3] - mins[2]) / (maxs[2]-mins[2]) #dens
+ab_lut_norm[,4] <- (ab_lut_norm[,4] - mins[3]) / (maxs[3]-mins[3]) #ab
 
 
 search_esm <- function(ab_lut, ab_lut_norm, current_pnt, th, mins, maxs, nneigh){
   
   current_pnt_norm <- current_pnt
-  current_pnt_norm[,1] <- (current_pnt_norm[,1] - mins[1])/ (maxs[1]-mins[1])
+  current_pnt_norm[,1] <- (current_pnt_norm[,1] - mins[1]) / (maxs[1]-mins[1])
   current_pnt_norm[,2] <- (current_pnt_norm[,2] - mins[2]) / (maxs[2]-mins[2])
   current_pnt_norm[,3] <- (current_pnt_norm[,3] - mins[3]) / (maxs[3]-mins[3])
   
-  
-  sub_norm <- ab_lut_norm[abs(ab_lut[,4] - current_pnt[1,3]) < th,]
+  if(th == 0){ #no subsetting
+    sub_norm <- ab_lut_norm
+  }else{
+    sub_norm <- ab_lut_norm[abs(ab_lut[,4] - current_pnt[1,3]) < th,]
+  }
+
   d <- rdist(sub_norm[,c(2:4)], current_pnt_norm) # Euclidean distance in 3D
   these_plots <- sub_norm[(order(d)[1:(nneigh*1)]),1] # use nneigh nearest-neighbours
   # little jitter
@@ -266,30 +311,43 @@ search_esm <- function(ab_lut, ab_lut_norm, current_pnt, th, mins, maxs, nneigh)
  
   return(these_plots)
 }
+
 years <- 2012:1962
-th <- 1
-nneigh <- 20
+
+# few knobs you can turn under the current implementation
+th <- 0 # you can set it to zero if you don't want to subset FIA pahse space according to a biomass threshold
+nneigh <- 150
+mean_only <- TRUE 
+
 i <- y <- 1 
 corrected_ab <- list()
+dplot <- TRUE # turn diagnostic plot on/off, doesn't make it much faster
+
 for( i in 1:250){
   
-  plot(12:40,seq(100,1200, length.out= length(12:40)),"n",xlab="dbh",ylab="dens",main=paste0("nneigh: ",nneigh, " i: ",i, " r: ", radd))
-  arrows(meanB$diameanB,meanB$tpasumB,meanB$prevdiameanB,meanB$prevtpasumB, col="lightgray",
-         length=0.065, angle=22,lwd=1) 
-  legend("topright", legend =c("paleon tree_ring only", "paleon tr+census", "esm correction"),
-         col = c(2,1,4), lty=1)
+  if(dplot){
+    plot(12:40,seq(100,1200, length.out= length(12:40)),"n",xlab="dbh",ylab="dens",main=paste0("nneigh: ",nneigh," th: " ,th, " i: ",i))
+    arrows(meanB$diameanB,meanB$tpasumB,meanB$prevdiameanB,meanB$prevtpasumB, col="lightgray",
+           length=0.065, angle=22,lwd=1) 
+    legend("topright", legend =c("paleon tree_ring only", "paleon tr+census", "esm correction"),
+           col = c(2,1,4), lty=1)
+  }
+
   corrected_ab[[i]] <- list()
   #corrected_ab[[i]] <- matrix(NA, ncol = 3, nrow = length(years)+1)
   
   for( y in seq_along(years)){
     
-    # draw the arrows
-    # non-fading arrow, we don't have this at every site
-    arrows(crec[[i]][y,1], crec[[i]][y,2], crec[[i]][y+1,1], crec[[i]][y+1,2], col=1,
-           length=0.065, angle=22)
-    # fading arrow
-    arrows(frec[[i]][y,1], frec[[i]][y,2], frec[[i]][y+1,1], frec[[i]][y+1,2], col=2,
-           length=0.065, angle=22)
+    # draw the arrows,these are paleon arrows, no correction
+    if(dplot){
+      # non-fading arrow, we don't have this at every site
+      arrows(crec[[i]][y,1], crec[[i]][y,2], crec[[i]][y+1,1], crec[[i]][y+1,2], col=1,
+             length=0.065, angle=22)
+      # fading arrow
+      arrows(frec[[i]][y,1], frec[[i]][y,2], frec[[i]][y+1,1], frec[[i]][y+1,2], col=2,
+             length=0.065, angle=22)
+    }
+
     
     
     if(y == 1){ 
@@ -300,53 +358,75 @@ for( i in 1:250){
       # find the closest FIA plots to the beginning of the red arrow
       current_pnt <- frec[[i]][y,, drop=FALSE]
       these_plots <- search_esm(ab_lut, ab_lut_norm, current_pnt, th, mins, maxs, nneigh)
-      corrected_ab[[i]][[y]] <- these_plots[,2:4]
       
       these_plots_past <- update_ab(these_plots, q, 1)
-      corrected_ab[[i]][[y+1]]  <- these_plots_past
       
-    }else{
+      if(!mean_only){
+        corrected_ab[[i]][[y]]    <- these_plots[,2:4]
+        corrected_ab[[i]][[y+1]]  <- these_plots_past
+      }else{
+        corrected_ab[[i]][[y]]    <- matrix(apply(these_plots[,2:4],2,mean),nrow=1)
+        corrected_ab[[i]][[y+1]]  <- matrix(apply(these_plots_past, 2,mean),nrow=1)
+      }
+      
+      
+    }else if(!mean_only){
       # use corrected arrow of the precious iteration
       # find the closest FIA plots to the beginning of the red arrow
       current_pnts <- corrected_ab[[i]][[y]]
-      #current_pnt <- corrected_ab[[i]][y,,drop=FALSE]
+      
        new_plots <- lapply(seq_len(nneigh), function(x){
          tmp_plots <- search_esm(ab_lut, ab_lut_norm, current_pnts[x,,drop=FALSE], th, mins, maxs, nneigh)
          return(tmp_plots)
        })
        for(nsl in seq_along(new_plots)){
          these_plots_past <- update_ab(new_plots[[nsl]], q, 1)
+         #take the mean?
          new_plots[[nsl]] <- apply(these_plots_past, 2, mean, na.rm=TRUE)
        }
        new_plots <- do.call("rbind",new_plots)
 
        corrected_ab[[i]][[y+1]] <- new_plots
 
+    }else{
+       current_pnt <- corrected_ab[[i]][[y]]
+       
+       these_plots <- search_esm(ab_lut, ab_lut_norm, current_pnt, th, mins, maxs, nneigh)
+       
+       these_plots_past <- update_ab(these_plots, q, 1)
+       corrected_ab[[i]][[y+1]]  <- matrix(apply(these_plots_past, 2,mean),nrow=1)
     }
     
-    prev_arr <- apply(corrected_ab[[i]][[y]], 2, mean, na.rm=TRUE)
-    next_arr <- apply(corrected_ab[[i]][[y+1]], 2, mean, na.rm=TRUE)
-    # corrected arrow
-    arrows(prev_arr[1], prev_arr[2], next_arr[1], next_arr[2], 
-           col=4, length=0.065, angle=22)
-    #arrows(corrected_ab[[i]][y,1], corrected_ab[[i]][y,2], 
-    #       corrected_ab[[i]][y+1,1], corrected_ab[[i]][y+1,2], 
-    #       col=4, length=0.065, angle=22)
+    if(dplot){
+      if(!mean_only){
+        prev_arr <- apply(corrected_ab[[i]][[y]], 2, mean, na.rm=TRUE)
+        next_arr <- apply(corrected_ab[[i]][[y+1]], 2, mean, na.rm=TRUE)
+        
+        # corrected arrow
+        arrows(prev_arr[1], prev_arr[2], next_arr[1], next_arr[2], 
+               col=4, length=0.065, angle=22)
+      }else{
+        arrows(corrected_ab[[i]][[y]][,1], corrected_ab[[i]][[y]][,2], 
+               corrected_ab[[i]][[y+1]][,1], corrected_ab[[i]][[y+1]][,2], 
+               col=4, length=0.065, angle=22)
+      }
+
     }
-}
+  } # year-loop ends
+} # iteration-loop ends
 
-i <- 4
-plot(corrected_ab[[i]][,3], crec[[i]][,3])
-abline(0,1)
 
-corrected_ab[[i]] <- NULL
+# corrected_ab[[i]] <- NULL # this line is just to be able to plot the graph before all 250 iterations end
 y.list <- list()
 for(l in 1:52){
   esm_correction <- list()
   for(tyi in seq_along(corrected_ab)){
     tmp <- sapply(corrected_ab[[tyi]], function(x) x[,3])
-    #tmp <- corrected_ab[[tyi]][,3]
-    esm_correction[[tyi]] <- tmp[,l]
+    if(!mean_only){
+      esm_correction[[tyi]] <- tmp[,l]
+    }else{
+      esm_correction[[tyi]] <- tmp[l]
+    }
   }
   y.list[[l]] <- quantile(unlist(esm_correction),  c(0.025, 0.5, 0.975))
   #y.list[[l]] <- mean(unlist(esm_correction))
@@ -364,10 +444,13 @@ pal_tr_cen <-lapply(crec, function(x) x[,3])
 pal_tr_cen <- do.call("rbind", pal_tr_cen)
 and_CI <- apply(pal_tr_cen, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
 
-
+# reverse years
+agbCI_f <- agbCI_f[,ncol(agbCI_f):1]
+and_CI_f <- and_CI_f[, ncol(and_CI_f):1]
+and_CI <- and_CI[, ncol(and_CI):1]
 
 plot(agbCI_f[1,], ylim = c(50,  400), xaxt = "n",lwd = 3, xlab = "Years", ylab = "AB (Mg/ha)",
-     main = "HF - site 1", type = "n", cex.lab=1.5)
+     main = paste0("HF - site 3, nneigh:",nneigh, " th:",th, ifelse(mean_only, ", mean_only", "")), type = "n", cex.lab=1.5)
 polygon(c(agb_poly, rev(agb_poly)),c((agbCI_f[3,]), rev(agbCI_f[1,])),col=adjustcolor("lightgray",alpha.f=0.5),border="darkgray", lwd =2)
 lines(agbCI_f[2,], col = "darkgray", lwd=2)
 polygon(c(agb_poly, rev(agb_poly)),c((and_CI_f[3,]), rev(and_CI_f[1,])),col=adjustcolor("lightpink",alpha.f=0.5),border="lightpink", lwd =2)
@@ -376,5 +459,4 @@ polygon(c(agb_poly, rev(agb_poly)),c((and_CI[3,]), rev(and_CI[1,])),col=adjustco
 lines(and_CI[2,], col = "lightblue3", lwd=2)
 legend("topright", col = c("darkgray", "lightblue3","lightpink"),
        legend = c("corrected", "Raw + Census","Raw"),lty=1, lwd=3, cex=0.7)
-yr <- 2012:(years[y])
-axis(1, at=agb_poly, labels=yr)
+axis(1, at=agb_poly, labels=1961:2012)
