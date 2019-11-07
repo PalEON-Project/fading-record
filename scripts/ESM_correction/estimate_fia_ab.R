@@ -3,8 +3,8 @@ library(data.table)
 library(plyr)
 library(methods)
 
-file.in.normal = "../../data/ESM.rds"
-file.in.fading = "../../data/ESM_F.rds"
+file.in.normal = ".../fading-record/data/ESM.rds"
+file.in.fading = ".../fading-record/data/ESM_F.rds"
 
 # --- read in FIA DB query
 # read in ESM 
@@ -12,6 +12,7 @@ q = as.data.table(readRDS(file.in.normal))
 # read in ESM fading record scenario 
 w = as.data.table(readRDS(file.in.fading))
 
+# making sure NAs are accounted for 
 sumNA  = function(x) sum(x,na.rm=T)
 meanNA = function(x) mean(x,na.rm=T)
 q[, PREVTPAsum     := sumNA(start1tpa), by=PLT_CN                 ]  # "startsumTPA"
@@ -46,8 +47,8 @@ w[, tpasum.m      := tpasum      / 0.404686  ]
 w[, prevtpasum.m  := prevtpasum  / 0.404686  ]
 
 
-fia_to_paleon   <- read.table("../../data/fia_to_level3a_v0.5.csv", heade = TRUE, sep="\t")
-chojnacky_table <- read.table("../../data/level3a_to_chojnacky_v0.2.csv", header = TRUE, sep = "\t")
+fia_to_paleon   <- read.table(".../fading-record/data/fia_to_level3a_v0.5.csv", heade = TRUE, sep="\t")
+chojnacky_table <- read.table(".../fading-record/data/level3a_to_chojnacky_v0.2.csv", header = TRUE, sep = "\t")
 
 # there isn't any, but filter out plots that don't have FIA spcd
 q <- q[!(q$plt_cn %in% unique(q$plt_cn[is.na(q$spcd)])),]
@@ -63,7 +64,7 @@ q$paleon <- plyr::mapvalues(q$spcd, fia_to_paleon$fia_spcd, as.character(fia_to_
 ############################ build ab_lut (loop over FIA plots) ############################ 
 
 # Should I create 1 lookup table or 4 (normal ESM: present-past, fading record ESM: present-past)
-# For now trying 1
+# For now trying 1 ESM present
 
 fia_plots <- unique(q$plt_cn) # 64520 plots
 
@@ -95,6 +96,6 @@ for(p in seq_along(fia_plots)){
 
 #some plots had no dbh data
 ab_lut <- ab_lut[complete.cases(ab_lut),]
-save(ab_lut, file = "../../data/ab_lut.Rdata")
+save(ab_lut, file = ".../fading-record/data/ab_lut.Rdata")
 
 
