@@ -213,12 +213,11 @@ db.getShowQueries <- function() {
 
 
 
-file.pft = "../../data/spcd2pft.csv"
-file.normal = "../../data/ESM.rds"
-file.fading = "../../data/ESM_F.rds"
+file.pft = ".../fading-record/data/spcd2pft.csv"
+file.normal = ".../fading-record/data/ESM.rds"
+file.fading = ".../fading-record/data/ESM_F.rds"
 
-fia_extract(file.normal, file.pft)
-fia_extract(file.fading, file.pft, fading_record = TRUE)
+
 
 fia_extract <- function(file.out, file.pft, fading_record = FALSE){
   
@@ -361,7 +360,8 @@ fia_extract <- function(file.out, file.pft, fading_record = FALSE){
     GRM[COMPONENT!="SURVIVOR", DIA_BEGIN := NA] # Set non-survivor values to NA
     
     # no ingrowth
-    GRM[, end1tpa        := SURVIVORTPA + INGROWTHTPA                   ]
+    GRM[, end1tpa        := SURVIVORTPA              ]
+    GRM[COMPONENT!="SURVIVOR", DIA_END := NA] # Set non-survivor values to NA
   }
   
   
@@ -465,7 +465,8 @@ fia_extract <- function(file.out, file.pft, fading_record = FALSE){
 } # end of function fia_extract
 
 
-
+fia_extract(file.normal, file.pft)
+fia_extract(file.fading, file.pft, fading_record = TRUE)
 
 # ---------- DIAGNOSTICS by RK
 # q = merge(GRM,TREE, by='TRE_CN', select=c("DIA_BEGIN","DIA_END","PREVDIAmean","DIAmean","DIA","PREVDIA","DIA5alive","DIA5meanalive","PREVDIA5alive","PREVDIA5meanalive"))
