@@ -266,14 +266,15 @@ fia_extract <- function(file.out, file.pft, fading_record = FALSE){
   # Store statecd and state names
   states = sort(unique(PLOT$STATECD))
   n.state = length(states)
-  surv = db.query('SELECT statecd,statenm FROM survey', con=fia.con)
+  surv = db.query('SELECT statecd, statenm, rscd FROM survey', con=fia.con)
   state.names = surv$statenm[match(states,surv$statecd)]
   
   
   # --- Query COND
   cat("Query COND...\n")
   query = paste('SELECT 
-                plt_cn, condid, stdorgcd
+                plt_cn, condid, stdorgcd, dstrbcd1, dstrbyr1, dstrbcd2, dstrbyr2,
+                dstrbcd3, dstrbyr3, trtcd1, trtyr1, trtcd2, trtyr2, trtcd3, trtyr3
                 FROM cond WHERE 
                 stdorgcd=0 AND ',
                 'statecd IN (', paste(states,collapse=','), ')')
