@@ -457,6 +457,9 @@ fia_extract <- function(file.out, file.pft, fading_record = FALSE){
   setnames(ALL, c("STATECD.y","CONmax.y"), c("STATECD","CONmax"))
   setnames(ALL, "START", "PREVYR")
   
+  #add RSCD per Andria's request
+  ALL$RSCD <- surv$rscd[match(ALL$STATECD,surv$statecd)]
+  
   # --- Save outputs
   cat("Save...\n")
   saveRDS(ALL, file = file.out)
