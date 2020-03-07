@@ -1,10 +1,10 @@
-library(PEcAn.allometry)
+# library(PEcAn.allometry)
 library(data.table)
 library(plyr)
 library(methods)
 
-file.in.normal = "../../data/ESM.rds"
-file.in.fading = "../../data/ESM_F.rds"
+file.in.normal = "../../data/ESM_v2.rds"
+file.in.fading = "../../data/ESM_F_v2.rds"
 
 # --- read in FIA DB query
 # read in ESM 
