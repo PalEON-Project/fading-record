@@ -1,11 +1,12 @@
 library(fields)
 library(data.table)
-library(PEcAn.allometry)
+library(ggplot2)
+# library(PEcAn.allometry) # not needed?
 
 ####################################### Read data in #######################################
 
-file.in.normal = "../../data/ESM.rds"
-file.in.fading = "../../data/ESM_F.rds"
+file.in.normal = "../../data/ESM_v2.rds"
+file.in.fading = "../../data/ESM_F_v2.rds"
 file.in.model  = "../../data/HF_PREDS_tree_iter_25June2019_IF.RDS"
 #file.in.model  = "../../data/HF_FR_input_corrected.RDS"
 
@@ -73,6 +74,18 @@ q <- q[!(q$plt_cn %in% unique(q$plt_cn[is.na(q$spcd)])),]
 plots_with_these_spcd <- fia_to_paleon$fia_spcd[!(fia_to_paleon$level3a %in% chojnacky_table$level3a)]
 q <- q[!(q$plt_cn %in% unique(q$plt_cn[q$spcd %in% plots_with_these_spcd])), ]
 
+# remove any plots with treatments
+q = q[which((q$trtcd1==0)&(q$trtcd2==0)&(q$trtcd3==0)),]
+w = w[which((w$trtcd1==0)&(w$trtcd2==0)&(w$trtcd3==0)),]
+
+# remove any plots with disturbances
+q = q[which((q$dstrbcd1==0)&(q$dstrbcd2==0)&(q$dstrbcd3==0)),]
+w = w[which((w$dstrbcd1==0)&(w$dstrbcd2==0)&(w$dstrbcd3==0)),]
+
+# only use plots from the northeastern region
+q = q[which((q$rscd==24)),]
+w = w[which((w$rscd==24)),]
+
 # match it to PalEON PFTs
 length(unique(fia_to_paleon$fia_spcd))
 length(unique(fia_to_paleon$level3a))
@@ -80,6 +93,10 @@ q$paleon <- plyr::mapvalues(q$spcd, fia_to_paleon$fia_spcd, as.character(fia_to_
 
 mort_prop = sum(ifelse((q$prevtpasum - q$tpasum)>0, 1, 0))/nrow(q)
 
+mort_frac = aggregate(component~plt_cn, q, function(x) length(which(x=="MORTALITY1"))/length(x))
+hist(mort_frac$component)
+
+length(which(mort_frac == 0))/nrow(mort_frac)
 
 # read in PalEON tree-ring model for Harvard Forest
 hf_rec <- readRDS(file.in.model)
@@ -187,1094 +204,845 @@ for( i in 1:50){#250){
   print(i)
 }
 
+####################################################################################################
+## 
+####################################################################################################
+# 
+# pal_tronly <- matrix(NA,nrow=250,ncol=length(years))
+# pal_tr_cen <- matrix(NA,nrow=250,ncol=length(years))
+# radd <- 50
+# th <- 5
+# th2 <- 0.5
+# 
+# corrected_ab <- list()
+# 
+# #load ab lut table
+# load("../../data/ab_lut.Rdata")
+# 
+# #normalize
+# ab_lut_norm <- ab_lut
+# mins <- apply(ab_lut[,2:4], 2, min)
+# maxs <- apply(ab_lut[,2:4], 2, max)
+# ab_lut_norm[,2] <- (ab_lut_norm[,2] - mins[1])/ (maxs[1]-mins[1])
+# ab_lut_norm[,3] <- (ab_lut_norm[,3] - mins[2]) / (maxs[2]-mins[2])
+# ab_lut_norm[,4] <- (ab_lut_norm[,4] - mins[3]) / (maxs[3]-mins[3])
 
+####################################################################################################
+## CORRECTION STEP 1: FIND FIA PLOTS THAT ARE CLOSE IN PHASE SPACE 
+####################################################################################################
 
-## fading_arrow_length <- function(...){
-##    ...
-## }
-
-
-# this function rescales the 5-yr ESM arrow and calculates AB
-update_ab <- function(these_plots_cur, esm, sfc){
-  rescaled_mean_dbhs <- rep(NA, nrow(these_plots_cur))
-  rescaled_mean_dens <- rep(NA, nrow(these_plots_cur))
-  rescaled_mean_agbs <- rep(NA, nrow(these_plots_cur))
+search_esm3D <- function(ab_lut, ab_lut_norm, current_pnt, th, mins, maxs, nneigh){
   
-  #recalculate ab allometrically for rescaled
-  for(p in seq_len(nrow(these_plots_cur))){
-    
-    sub_plot <- esm[esm$plt_cn == these_plots_cur$plt_cn[p], ] 
-    
-    # first scale esm to per year rate
-    sf <- 1/(sub_plot$invyr[1] - sub_plot$prevyr[1])
-    new_dbh <- sub_plot$diamean.m[1] + (sub_plot$prevdiamean.m[1] - sub_plot$diamean.m[1]) * sf
-    prcnt_dbh <- ((new_dbh- sub_plot$prevdiamean.m[1])/ sub_plot$prevdiamean.m[1])*100
-    sub_plot$dia_begin <- sub_plot$dia_begin + (sub_plot$dia_begin * prcnt_dbh/100)
-    
-    new_den <- sub_plot$tpasum.m[1] + (sub_plot$prevtpasum.m[1] - sub_plot$tpasum.m[1]) * sf
-    prcnt_den <- (new_den- sub_plot$prevtpasum.m[1])/ sub_plot$prevtpasum.m[1]*100
-    sub_plot$start1tpa <- sub_plot$start1tpa + (sub_plot$start1tpa * prcnt_den/100)
-    
-    
-    # if we want to update the rescaling the arrow with site specific magnitudes (using sfc) do it here
-    
-    #new_dbh <- sub_plot$diamean[1] + (mean(sub_plot$dia_begin,na.rm=TRUE)-sub_plot$diamean[1])*sfc
-    #new_den <- sub_plot$tpasum[1] + (sum(sub_plot$start1tpa,na.rm=TRUE)-sub_plot$tpasum[1])*sfc
-    
-    #prcnt_dbh <- (new_dbh- mean(sub_plot$dia_begin,na.rm=TRUE))/ mean(sub_plot$dia_begin,na.rm=TRUE)*100
-    #prcnt_den <- (new_den- sum(sub_plot$start1tpa,na.rm=TRUE))/ sum(sub_plot$start1tpa,na.rm=TRUE)*100
-    
-    #sub_plot$dia_begin <- sub_plot$dia_begin + (sub_plot$dia_begin * prcnt_dbh/100)
-    #sub_plot$start1tpa <- sub_plot$start1tpa + (sub_plot$start1tpa * prcnt_den/100)
-    
-    beta0s <- chojnacky_table$beta0[match(sub_plot$paleon, as.character(chojnacky_table$level3a))]
-    beta1s <- chojnacky_table$beta1[match(sub_plot$paleon, as.character(chojnacky_table$level3a))]
-    
-    ### exp(b0 + b1*log(dbh))
-    agb           <- sum(exp(beta0s + beta1s*log(sub_plot$dia_begin* 2.54)), na.rm = TRUE)
-    agb_Mg        <- agb * 1e-03 # kg to Mg
-    agb_Mg_plt    <- agb_Mg / (4*7.3152^2*pi) # Mg/m2
-    agb_Mg_ha_plt <- agb_Mg_plt / 1e-04  # Mg/m2 to Mg/ha
-    
-    
-    rescaled_mean_dbhs[p] <- mean(sub_plot$dia_begin * 2.54, na.rm=TRUE)
-    rescaled_mean_dens[p] <- sum(sub_plot$start1tpa / 0.404686, na.rm = TRUE)
-    rescaled_mean_agbs[p] <- agb_Mg_ha_plt
-  }
+  # normalize current empirical point in phase space
+  current_pnt_norm <- current_pnt
+  current_pnt_norm[,1] <- (current_pnt_norm[,1] - mins[1])/ (maxs[1]-mins[1])
+  current_pnt_norm[,2] <- (current_pnt_norm[,2] - mins[2]) / (maxs[2]-mins[2])
+  current_pnt_norm[,3] <- (current_pnt_norm[,3] - mins[3]) / (maxs[3]-mins[3])
   
-  #corrected_mat <- matrix(apply(cbind(rescaled_mean_dbhs, rescaled_mean_dens, rescaled_mean_agbs), 2, mean), ncol=3)
-  corrected_mat <- cbind(rescaled_mean_dbhs, rescaled_mean_dens, rescaled_mean_agbs)
   
-  return(corrected_mat)
+  # require that points be close in normalized biomass space
+  sub_norm <- ab_lut_norm[abs(ab_lut[,4] - current_pnt[1,3]) < th,]
+  
+  # Euclidean distance in 3-D phase space
+  d <- rdist(sub_norm[,c(2:4)], current_pnt_norm) # Euclidean distance in 3D
+  
+  # order the nneigh close plots from closest to farther in 3-D phase space
+  these_plots <- sub_norm[(order(d)[1:(nneigh*1)]),1] # use nneigh nearest-neighbours
+  # little jitter
+  #these_plots <- these_plots[sample(1:(nneigh*1), nneigh)]
+  
+  # return the plot info from LUT
+  these_plots <- ab_lut[ab_lut$plt_cn %in% these_plots, ]
+  
+  return(these_plots)
 }
 
-# this function rescales the 5-yr ESM arrow and calculates AB
-update_ab_current <- function(these_plots_cur, current_pnt, previous_pnt, esm, sfc){
-  rescaled_mean_dbhs <- rep(NA, nrow(these_plots_cur))
-  rescaled_mean_dens <- rep(NA, nrow(these_plots_cur))
-  rescaled_mean_agbs <- rep(NA, nrow(these_plots_cur))
+
+# search_esm2D(ab_lut_R, ab_lut_norm_R, current_pnt, th, mins, maxs, nneigh)
+
+search_esm2D <- function(ab_lut, ab_lut_norm, current_pnt, th, mins, maxs, nneigh){
   
-  #recalculate ab allometrically for rescaled
-  for(p in seq_len(nrow(these_plots_cur))){
+  # normalize current empirical point in phase space
+  current_pnt_norm <- current_pnt
+  current_pnt_norm[,1] <- (current_pnt_norm[,1] - mins[1])/ (maxs[1]-mins[1])
+  current_pnt_norm[,2] <- (current_pnt_norm[,2] - mins[2]) / (maxs[2]-mins[2])
+  current_pnt_norm[,3] <- (current_pnt_norm[,3] - mins[3]) / (maxs[3]-mins[3])
+  
+  # require that points be close in normalized biomass space
+  sub_norm <- ab_lut_norm[abs(ab_lut[,4] - current_pnt[1,3]) < th,]
+
+  # Euclidean distance in 2-D phase space (biomass and mean stand diameter)
+  d <- rdist(sub_norm[,c(2,4)], matrix(current_pnt_norm[c(1,3)],nrow=1)) 
+  
+  # order the nneigh close plots from closest to farther in 2-D phase space
+  these_plots <- sub_norm[(order(d)[1:(nneigh*1)]),] # use nneigh nearest-neighbours
+  these_plots <- these_plots[,1]
+  # little jitter
+  #these_plots <- these_plots[sample(1:(nneigh*1), nneigh)]
+  
+  # return the plot info from LUT
+  these_plots <- ab_lut[ab_lut$plt_cn %in% these_plots, ]
+  
+  return(these_plots)
+}
+
+####################################################################################################
+## CORRECTION STEP 2: USE CLOSE FIA PLOTS TO GET CORRECTION
+####################################################################################################
+
+get_correction <- function(these_plots, q, w){
+  correction_dbhs <- rep(NA, nrow(these_plots))
+  correction_dens <- rep(NA, nrow(these_plots))
+  correction_agbs <- rep(NA, nrow(these_plots))
+  
+  for (plt in 1:nrow(these_plots)){
+    q_sub <- q[which(q$plt_cn %in% these_plots$plt_cn[plt]),]
+    w_sub <- w[which(w$plt_cn %in% these_plots$plt_cn[plt]),]
     
-    sub_plot <- esm[esm$plt_cn == these_plots_cur$plt_cn[p], ] 
-    
-    # first scale esm to per year rate
-    sf <- 1/(sub_plot$invyr[1] - sub_plot$prevyr[1])
+    sf <- 1/(q_sub$invyr[1] - q_sub$prevyr[1])
     
     
-    if ((sub_plot$tpasum.m[1] - sub_plot$prevtpasum.m[1])==0){
-      rescaled_mean_dbhs[p] <- 0
-      rescaled_mean_dens[p] <- 0
-      rescaled_mean_agbs[p] <- 0
-    } else {
+    if ((q_sub$tpasum[1] - q_sub$prevtpasum[1])==0){
+      fr_dbh_correction = 0 
+      fr_dbh_growth <-  (w_sub$diamean[1] - w_sub$prevdiamean[1]) * sf
       
-      dbh_correction <- (sub_plot$diamean.m[1] - sub_plot$prevdiamean.m[1]) * sf
-      den_correction <- (sub_plot$tpasum.m[1] - sub_plot$prevtpasum.m[1]) * sf
+      fr_den_correction = 0
+      fr_den_growth  <- (w_sub$tpasum.m[1] - w_sub$prevtpasum.m[1]) * sf
       
-      beta0s <- chojnacky_table$beta0[match(sub_plot$paleon, as.character(chojnacky_table$level3a))]
-      beta1s <- chojnacky_table$beta1[match(sub_plot$paleon, as.character(chojnacky_table$level3a))]
+      fr_agb_correction = 0
+      
+      w_beta0s <- chojnacky_table$beta0[match(q_sub$paleon, as.character(chojnacky_table$level3a))]
+      w_beta1s <- chojnacky_table$beta1[match(q_sub$paleon, as.character(chojnacky_table$level3a))]
       
       # current plot
       ### exp(b0 + b1*log(dbh))
-      agb_end           <- sum(exp(beta0s + beta1s*log(sub_plot$dia_end* 2.54)), na.rm = TRUE)
-      agb_Mg_end        <- agb_end * 1e-03 # kg to Mg
-      agb_Mg_plt_end    <- agb_Mg_end / (4*7.3152^2*pi) # Mg/m2
-      agb_Mg_ha_plt_end <- agb_Mg_plt_end / 1e-04  # Mg/m2 to Mg/ha
+      w_agb_end           <- sum(exp(w_beta0s + w_beta1s*log(w_sub$dia_end)), na.rm = TRUE)
+      w_agb_Mg_end        <- w_agb_end * 1e-03 # kg to Mg
+      w_agb_Mg_plt_end    <- w_agb_Mg_end / (4*7.3152^2*pi) # Mg/m2
+      w_agb_Mg_ha_plt_end <- w_agb_Mg_plt_end / 1e-04  # Mg/m2 to Mg/ha
       
       # previous plot
       ### exp(b0 + b1*log(dbh))
-      agb           <- sum(exp(beta0s + beta1s*log(sub_plot$dia_begin* 2.54)), na.rm = TRUE)
-      agb_Mg        <- agb * 1e-03 # kg to Mg
-      agb_Mg_plt    <- agb_Mg / (4*7.3152^2*pi) # Mg/m2
-      agb_Mg_ha_plt <- agb_Mg_plt / 1e-04  # Mg/m2 to Mg/ha
+      w_agb           <- sum(exp(w_beta0s + w_beta1s*log(w_sub$dia_begin)), na.rm = TRUE)
+      w_agb_Mg        <- w_agb * 1e-03 # kg to Mg
+      w_agb_Mg_plt    <- w_agb_Mg / (4*7.3152^2*pi) # Mg/m2
+      w_agb_Mg_ha_plt <- w_agb_Mg_plt / 1e-04  # Mg/m2 to Mg/ha
       
       
-      agb_correction = (agb_Mg_ha_plt_end - agb_Mg_ha_plt)*sf
+      fr_agb_growth = (w_agb_Mg_ha_plt_end - w_agb_Mg_ha_plt)*sf
+    } else {  
       
-      # rescaled_mean_dbhs[p] <- mean(sub_plot$dia_begin * 2.54, na.rm=TRUE)
-      # rescaled_mean_dens[p] <- sum(sub_plot$start1tpa / 0.404686, na.rm = TRUE)
-      # rescaled_mean_agbs[p] <- agb_Mg_ha_plt
-      rescaled_mean_dbhs[p] <- current_pnt[1] - dbh_correction
-      rescaled_mean_dens[p] <- current_pnt[2] - den_correction
-      rescaled_mean_agbs[p] <- current_pnt[3] - agb_correction
+      # q_dbh_correction <- (q_sub$diamean[1] - q_sub$prevdiamean[1]) * sf
+      # w_dbh_correction <- (w_sub$diamean[1] - w_sub$prevdiamean[1]) * sf
+      # 
+      # # observe fading now, but in past want not faded
+      # fr_dbh_correction <- (q_sub$diamean.m[1] - w_sub$prevdiamean.m[1]) * sf
+      fr_dbh_correction <- (q_sub$prevdiamean[1] - w_sub$prevdiamean[1]) * sf
+      fr_dbh_growth <-  (w_sub$diamean[1] - w_sub$prevdiamean[1]) * sf
+      
+      
+      q_den_correction  <- (q_sub$tpasum.m[1] - q_sub$prevtpasum.m[1]) * sf
+      fr_den_growth  <- (w_sub$tpasum.m[1] - w_sub$prevtpasum.m[1]) * sf
+      fr_den_correction <- (q_sub$prevtpasum.m[1] - w_sub$prevtpasum.m[1]) * sf
+      
+      q_beta0s <- chojnacky_table$beta0[match(q_sub$paleon, as.character(chojnacky_table$level3a))]
+      q_beta1s <- chojnacky_table$beta1[match(q_sub$paleon, as.character(chojnacky_table$level3a))]
+      
+      # current plot
+      ### exp(b0 + b1*log(dbh))
+      q_agb_end           <- sum(exp(q_beta0s + q_beta1s*log(q_sub$dia_end)), na.rm = TRUE)
+      q_agb_Mg_end        <- q_agb_end * 1e-03 # kg to Mg
+      q_agb_Mg_plt_end    <- q_agb_Mg_end / (4*7.3152^2*pi) # Mg/m2
+      q_agb_Mg_ha_plt_end <- q_agb_Mg_plt_end / 1e-04  # Mg/m2 to Mg/ha
+      
+      # previous plot
+      ### exp(b0 + b1*log(dbh))
+      q_agb           <- sum(exp(q_beta0s + q_beta1s*log(q_sub$dia_begin)), na.rm = TRUE)
+      q_agb_Mg        <- q_agb * 1e-03 # kg to Mg
+      q_agb_Mg_plt    <- q_agb_Mg / (4*7.3152^2*pi) # Mg/m2
+      q_agb_Mg_ha_plt <- q_agb_Mg_plt / 1e-04  # Mg/m2 to Mg/ha
+      
+      
+      q_agb_correction = (q_agb_Mg_ha_plt_end - q_agb_Mg_ha_plt)*sf
+      
+      
+      w_beta0s <- chojnacky_table$beta0[match(q_sub$paleon, as.character(chojnacky_table$level3a))]
+      w_beta1s <- chojnacky_table$beta1[match(q_sub$paleon, as.character(chojnacky_table$level3a))]
+      
+      # current plot
+      ### exp(b0 + b1*log(dbh))
+      w_agb_end           <- sum(exp(w_beta0s + w_beta1s*log(w_sub$dia_end)), na.rm = TRUE)
+      w_agb_Mg_end        <- w_agb_end * 1e-03 # kg to Mg
+      w_agb_Mg_plt_end    <- w_agb_Mg_end / (4*7.3152^2*pi) # Mg/m2
+      w_agb_Mg_ha_plt_end <- w_agb_Mg_plt_end / 1e-04  # Mg/m2 to Mg/ha
+      
+      # previous plot
+      ### exp(b0 + b1*log(dbh))
+      w_agb           <- sum(exp(w_beta0s + w_beta1s*log(w_sub$dia_begin)), na.rm = TRUE)
+      w_agb_Mg        <- w_agb * 1e-03 # kg to Mg
+      w_agb_Mg_plt    <- w_agb_Mg / (4*7.3152^2*pi) # Mg/m2
+      w_agb_Mg_ha_plt <- w_agb_Mg_plt / 1e-04  # Mg/m2 to Mg/ha
+      
+      
+      fr_agb_growth = (w_agb_Mg_ha_plt_end - w_agb_Mg_ha_plt)*sf
+      
+      fr_agb_correction = (q_agb_Mg_ha_plt - w_agb_Mg_ha_plt)*sf
     }
+    
+    correction_dbhs[plt] = fr_dbh_correction #- fr_dbh_growth
+    correction_dens[plt] = fr_den_correction
+    correction_agbs[plt] = fr_agb_correction #- fr_agb_growth
+    
   }
   
-  #corrected_mat <- matrix(apply(cbind(rescaled_mean_dbhs, rescaled_mean_dens, rescaled_mean_agbs), 2, mean), ncol=3)
-  corrected_mat <- cbind(rescaled_mean_dbhs, rescaled_mean_dens, rescaled_mean_agbs)
+  return(data.frame(dbh=correction_dbhs, dens=correction_dens, agb=correction_agbs))
+}
+
+
+####################################################################################################
+## CORRECTION STEP 3: APPLY CORRECTION
+####################################################################################################
+
+apply_correction <- function(current_pnt, growth, correction){
   
-  return(corrected_mat)
+  
+  
+  new_pnt = t(apply(correction, 1, function(x) x + current_pnt - growth))
+  
+  # new_pnt = current_pnt - growth + correction
+  
+  # new_pnt = current_pnt - growth + colMeans(correction) 
+  
+  return(new_pnt)
+}
+
+######################################################################################################################################
+## DO IT
+######################################################################################################################################
+
+#load ab lut table
+load("../../data/ab_lut_yr.Rdata")
+
+#normalize
+ab_lut_norm <- ab_lut
+mins <- apply(ab_lut[,2:4], 2, min)
+maxs <- apply(ab_lut[,2:4], 2, max)
+ab_lut_norm[,2] <- (ab_lut_norm[,2] - mins[1])/ (maxs[1]-mins[1])
+ab_lut_norm[,3] <- (ab_lut_norm[,3] - mins[2]) / (maxs[2]-mins[2])
+ab_lut_norm[,4] <- (ab_lut_norm[,4] - mins[3]) / (maxs[3]-mins[3])
+
+
+# w fading
+# q not fading
+
+years <- 2012:1961
+th <- 1
+nneigh <- 5#10 # was 20
+i <- y <- 1 
+close_plots = data.frame(matrix(0, nrow=0, ncol=12))
+colnames(close_plots) = c("plt_cn","dbh", "dens", "ab", "invyr", 
+                          "rscd", 
+                          "dstrbcd1", "dstrbcd2", "dstrbcd3", 
+                          "trtcd1", "trtcd2", "trtcd3")
+  
+niter = 10#length(frec)
+correct = list(niter)
+for (i in 1:niter){
+  print(i)
+  correct_these = list(length(years))
+  for (y in 1:length(years)){
+    current_pnt  <- frec[[i]][y,, drop=FALSE]
+    # previous_pnt <- frec[[i]][y+1,, drop=FALSE]
+    # these_plots <- search_esm(ab_lut, ab_lut_norm, current_pnt, th, mins, maxs, nneigh)
+    these_plots <- search_esm2D(ab_lut, ab_lut_norm, current_pnt, th, mins, maxs, nneigh)
+    close_plots = rbind(close_plots, these_plots)
+    
+    correct_these[[y]] <- get_correction(these_plots, q, w)
+  }
+  correct[[i]] = correct_these
+}
+
+close_deets = q[which(q$plt_cn %in% close_plots$plt_cn),] 
+table(close_deets$rscd)
+table(close_deets$dstrbcd1)
+
+
+ab_lut_NOTRT = ab_lut[which((ab_lut$trtcd1==0)&(ab_lut$trtcd2==0)&(ab_lut$trtcd3==0)),]
+ab_lut_norm_NOTRT = ab_lut_norm[which((ab_lut_norm$trtcd1==0)&(ab_lut_norm$trtcd2==0)&(ab_lut_norm$trtcd3==0)),]
+
+niter = 10#length(frec)
+correct_NOTRT = list(niter)
+for (i in 1:niter){
+  print(i)
+  correct_these = list(length(years))
+  for (y in 1:length(years)){
+    current_pnt  <- frec[[i]][y,, drop=FALSE]
+    # previous_pnt <- frec[[i]][y+1,, drop=FALSE]
+    # these_plots <- search_esm(ab_lut, ab_lut_norm, current_pnt, th, mins, maxs, nneigh)
+    these_plots <- search_esm2D(ab_lut_NOTRT, ab_lut_norm_NOTRT, current_pnt, th, mins, maxs, nneigh)
+    close_plots = rbind(close_plots, these_plots)
+    
+    correct_these[[y]] <- get_correction(these_plots, q, w)
+  }
+  correct_NOTRT[[i]] = correct_these
+}
+
+ab_lut_NOD = ab_lut[which((ab_lut$dstrbcd1==0)&(ab_lut$dstrbcd2==0)&(ab_lut$dstrbcd3==0)),]
+ab_lut_norm_NOD = ab_lut_norm[which((ab_lut_norm$trtcd1==0)&(ab_lut_norm$trtcd2==0)&(ab_lut_norm$trtcd3==0)),]
+
+niter = 10#length(frec)
+correct_NOTRT = list(niter)
+for (i in 1:niter){
+  print(i)
+  correct_these = list(length(years))
+  for (y in 1:length(years)){
+    current_pnt  <- frec[[i]][y,, drop=FALSE]
+    # previous_pnt <- frec[[i]][y+1,, drop=FALSE]
+    # these_plots <- search_esm(ab_lut, ab_lut_norm, current_pnt, th, mins, maxs, nneigh)
+    these_plots <- search_esm2D(ab_lut_NOTRT, ab_lut_norm_NOTRT, current_pnt, th, mins, maxs, nneigh)
+    correct_these[[y]] <- get_correction(these_plots, q, w)
+  }
+  correct_NOTRT[[i]] = correct_these
+}
+
+# only plots from Northeastern Region
+ab_lut_R = ab_lut[which((ab_lut$rscd==24)),]
+ab_lut_norm_R = ab_lut_norm[which((ab_lut_norm$rscd==24)),]
+
+close_plots = data.frame(matrix(0, nrow=0, ncol=12))
+colnames(close_plots) = c("plt_cn","dbh", "dens", "ab", "invyr", 
+                          "rscd", 
+                          "dstrbcd1", "dstrbcd2", "dstrbcd3", 
+                          "trtcd1", "trtcd2", "trtcd3")
+
+niter = 10#length(frec)
+correct_R = list(niter)
+for (i in 1:niter){
+  print(i)
+  correct_these = list(length(years))
+  for (y in 1:length(years)){
+    current_pnt  <- frec[[i]][y,, drop=FALSE]
+    # previous_pnt <- frec[[i]][y+1,, drop=FALSE]
+    # these_plots <- search_esm(ab_lut, ab_lut_norm, current_pnt, th, mins, maxs, nneigh)
+    these_plots <- search_esm2D(ab_lut_R, ab_lut_norm_R, current_pnt, th, mins, maxs, nneigh)
+    close_plots = rbind(close_plots, these_plots)
+    
+    correct_these[[y]] <- get_correction(these_plots, q, w)
+  }
+  correct_R[[i]] = correct_these
+}
+
+close_deets = q[which(q$plt_cn %in% close_plots$plt_cn),] 
+table(close_deets$rscd)
+table(close_deets$dstrbcd1)
+
+close_lut = ab_lut_R[which(ab_lut_R$plt_cn %in% close_plots$plt_cn),] 
+table(close_lut$rscd)
+table(close_lut$dstrbcd1)
+
+# only plots from Northeastern Region, not disturbed, no treatment
+ab_lut_X = ab_lut[which((ab_lut$rscd==24)),]
+ab_lut_X = ab_lut_X[which((ab_lut_X$dstrbcd1==0)&(ab_lut_X$dstrbcd2==0)&(ab_lut_X$dstrbcd3==0)),]
+ab_lut_X = ab_lut_X[which((ab_lut_X$trtcd1==0)&(ab_lut_X$trtcd2==0)&(ab_lut_X$trtcd3==0)),]
+
+ab_lut_norm_X = ab_lut_norm[which((ab_lut_norm$rscd==24)),]
+ab_lut_norm_X = ab_lut_norm_X[which((ab_lut_norm_X$dstrbcd1==0)&(ab_lut_norm_X$dstrbcd2==0)&(ab_lut_norm_X$dstrbcd3==0)),]
+ab_lut_norm_X = ab_lut_norm_X[which((ab_lut_norm_X$trtcd1==0)&(ab_lut_norm_X$trtcd2==0)&(ab_lut_norm_X$trtcd3==0)),]
+
+
+close_plots = data.frame(matrix(0, nrow=0, ncol=12))
+colnames(close_plots) = c("plt_cn","dbh", "dens", "ab", "invyr", 
+                          "rscd", 
+                          "dstrbcd1", "dstrbcd2", "dstrbcd3", 
+                          "trtcd1", "trtcd2", "trtcd3")
+
+niter = 10#length(frec)
+correct_R = list(niter)
+for (i in 1:niter){
+  print(i)
+  correct_these = list(length(years))
+  for (y in 1:length(years)){
+    current_pnt  <- frec[[i]][y,, drop=FALSE]
+    # previous_pnt <- frec[[i]][y+1,, drop=FALSE]
+    # these_plots <- search_esm(ab_lut, ab_lut_norm, current_pnt, th, mins, maxs, nneigh)
+    these_plots <- search_esm2D(ab_lut_X, ab_lut_norm_X, current_pnt, th, mins, maxs, nneigh)
+    close_plots = rbind(close_plots, these_plots)
+    
+    correct_these[[y]] <- get_correction(these_plots, q, w)
+  }
+  correct_R[[i]] = correct_these
+}
+
+close_deets = q[which(q$plt_cn %in% close_plots$plt_cn),] 
+table(close_deets$rscd)
+table(close_deets$dstrbcd1)
+
+close_lut = ab_lut_R[which(ab_lut_R$plt_cn %in% close_plots$plt_cn),] 
+table(close_lut$rscd)
+table(close_lut$dstrbcd1)
+
+
+######################################################################################################################################
+## PLOT THE CORRECTIONS
+######################################################################################################################################
+
+correct_df = data.frame(iter=numeric(0), correct=numeric(0), agb=numeric(0))
+
+for (i in 1:niter){
+  correct_iter = rbindlist(correct_R[[i]])$agb
+  agb_data = rep(frec[[i]][,3], each=nneigh)
+  correct_df = rbind(correct_df, data.frame(iter=rep(i, length(correct_iter)), 
+                                            correct=correct_iter, 
+                                            agb=agb_data))
+}
+
+breaks <- seq(0,max(correct_df$agb)+1,by=50)
+agb_bins <- cut(correct_df$agb,breaks = breaks,labels = F,include.lowest = F)
+
+count_zeros <- rep(NA,length(max(agb_bins)))
+for(i in 1:max(unique(agb_bins),na.rm=T)){
+  if(!any(which(agb_bins==i))) next()
+  count_zeros[i] <- length(which(correct_df[which(agb_bins==i),'correct']==0))/length(correct_df[which(agb_bins==i),'correct'])
 }
   
+ggplot(correct_df[-which(correct_df$correct==0),], aes(agb, correct)) +
+  geom_boxplot(aes(group = cut_width(agb, 25)))
   
-  pal_tronly <- matrix(NA,nrow=250,ncol=length(years))
-  pal_tr_cen <- matrix(NA,nrow=250,ncol=length(years))
-  radd <- 50
-  th <- 5
-  th2 <- 0.5
-  
-  corrected_ab <- list()
-  
-  #load ab lut table
-  load("../../data/ab_lut.Rdata")
-  
-  #normalize
-  ab_lut_norm <- ab_lut
-  mins <- apply(ab_lut[,2:4], 2, min)
-  maxs <- apply(ab_lut[,2:4], 2, max)
-  ab_lut_norm[,2] <- (ab_lut_norm[,2] - mins[1])/ (maxs[1]-mins[1])
-  ab_lut_norm[,3] <- (ab_lut_norm[,3] - mins[2]) / (maxs[2]-mins[2])
-  ab_lut_norm[,4] <- (ab_lut_norm[,4] - mins[3]) / (maxs[3]-mins[3])
-  
-  
-  search_esm <- function(ab_lut, ab_lut_norm, current_pnt, th, mins, maxs, nneigh){
+ ggplot(data = data.frame(breaks=breaks[-1],counts = count_zeros),aes(x=breaks, y=counts)) +
+  geom_point() +
+  scale_y_continuous(position = "right")
+
+######################################################################################################################################
+## METHOD 0: If add back, only add back if correction is positive, otherwise add back 0
+######################################################################################################################################
+
+correct_cumsum <- matrix(NA, nrow=length(years), ncol=0)
+for (iter in 1:length(correct)){
+  corrected_iter = matrix(NA, nrow=length(years), ncol=nneigh)
+  for (y in 1:(length(years))){
+    current_pnt = frec[[iter]][y,3]
+    previous_pnt = frec[[iter]][y-1,3]
     
-    current_pnt_norm <- current_pnt
-    current_pnt_norm[,1] <- (current_pnt_norm[,1] - mins[1])/ (maxs[1]-mins[1])
-    current_pnt_norm[,2] <- (current_pnt_norm[,2] - mins[2]) / (maxs[2]-mins[2])
-    current_pnt_norm[,3] <- (current_pnt_norm[,3] - mins[3]) / (maxs[3]-mins[3])
-    
-    
-    sub_norm <- ab_lut_norm[abs(ab_lut[,4] - current_pnt[1,3]) < th,]
-    d <- rdist(sub_norm[,c(2:4)], current_pnt_norm) # Euclidean distance in 3D
-    these_plots <- sub_norm[(order(d)[1:(nneigh*1)]),1] # use nneigh nearest-neighbours
-    # little jitter
-    #these_plots <- these_plots[sample(1:(nneigh*1), nneigh)]
-    these_plots <- ab_lut[ab_lut$plt_cn %in% these_plots, ]
-    
-    
-    return(these_plots)
-  }
-  
-  search_esm2 <- function(ab_lut, ab_lut_norm, current_pnt, th, mins, maxs, nneigh){
-    
-    # normalize current position
-    current_pnt_norm <- current_pnt
-    current_pnt_norm[,1] <- (current_pnt_norm[,1] - mins[1])/ (maxs[1]-mins[1])
-    current_pnt_norm[,2] <- (current_pnt_norm[,2] - mins[2]) / (maxs[2]-mins[2])
-    current_pnt_norm[,3] <- (current_pnt_norm[,3] - mins[3]) / (maxs[3]-mins[3])
-    
-    # # get ring-width recon value from past year
-    # previous_msd_norm <- (previous_pnt[,1]- mins[1]) / (maxs[1]-mins[1])
-    # previous_ab_norm <- (previous_pnt[,3]- mins[3]) / (maxs[3]-mins[3])
-    
-    # find the fia plots with biomass similar to ring-width recon from past year
-    sub_norm <- ab_lut_norm[abs(ab_lut[,4] - current_pnt[1,3]) < th,]
-    # sub_norm <- ab_lut_norm[abs(ab_lut[,4] - previous_pnt[1,3]) < th,]
-    
-    # dold <- rdist(sub_norm[,c(2:4)], current_pnt_norm) # Euclidean distance in 3D
-    
-    # only use mean dbh and ab to find closest
-    # d <- rdist(sub_norm[,c(2,4)], matrix(current_pnt_norm[c(1,3)],nrow=1)) # Euclidean distance in 3D
-    
-    d <- rdist(sub_norm[,c(2,4)], matrix(current_pnt_norm[c(1,3)],nrow=1)) # Euclidean distance in 3D
-    
-    these_plots <- sub_norm[(order(d)[1:(nneigh*1)]),] # use nneigh nearest-neighbours
-    # these_plots <- these_plots[which(these_plots$ab >= previous_ab_norm),1]
-    these_plots <- these_plots[,1]
-    # little jitter
-    #these_plots <- these_plots[sample(1:(nneigh*1), nneigh)]
-    these_plots <- ab_lut[ab_lut$plt_cn %in% these_plots, ]
-    
-    return(these_plots)
-  }
-  
-  
-  search_esm2 <- function(ab_lut, ab_lut_norm, current_pnt, th, mins, maxs, nneigh){
-    
-    # normalize current position
-    current_pnt_norm <- current_pnt
-    current_pnt_norm[,1] <- (current_pnt_norm[,1] - mins[1])/ (maxs[1]-mins[1])
-    current_pnt_norm[,2] <- (current_pnt_norm[,2] - mins[2]) / (maxs[2]-mins[2])
-    current_pnt_norm[,3] <- (current_pnt_norm[,3] - mins[3]) / (maxs[3]-mins[3])
-    
-    # # get ring-width recon value from past year
-    # previous_msd_norm <- (previous_pnt[,1]- mins[1]) / (maxs[1]-mins[1])
-    # previous_ab_norm <- (previous_pnt[,3]- mins[3]) / (maxs[3]-mins[3])
-    
-    # find the fia plots with biomass similar to ring-width recon from past year
-    sub_norm <- ab_lut_norm[abs(ab_lut[,4] - current_pnt[1,3]) < th,]
-    # sub_norm <- ab_lut_norm[abs(ab_lut[,4] - previous_pnt[1,3]) < th,]
-    
-    # dold <- rdist(sub_norm[,c(2:4)], current_pnt_norm) # Euclidean distance in 3D
-    
-    # only use mean dbh and ab to find closest
-    # d <- rdist(sub_norm[,c(2,4)], matrix(current_pnt_norm[c(1,3)],nrow=1)) # Euclidean distance in 3D
-    
-    d <- rdist(sub_norm[,c(2,4)], matrix(current_pnt_norm[c(1,3)],nrow=1)) # Euclidean distance in 3D
-    
-    these_plots <- sub_norm[(order(d)[1:(nneigh*1)]),] # use nneigh nearest-neighbours
-    # these_plots <- these_plots[which(these_plots$ab >= previous_ab_norm),1]
-    these_plots <- these_plots[,1]
-    # little jitter
-    #these_plots <- these_plots[sample(1:(nneigh*1), nneigh)]
-    these_plots <- ab_lut[ab_lut$plt_cn %in% these_plots, ]
-    
-    return(these_plots)
-  }
-  
-  ######################################################################################################################################
-  ##
-  ######################################################################################################################################
-  get_correction <- function(these_plots, q, w){
-    correction_dbhs <- rep(NA, nrow(these_plots))
-    correction_dens <- rep(NA, nrow(these_plots))
-    correction_agbs <- rep(NA, nrow(these_plots))
-    
-    for (plt in 1:nrow(these_plots)){
-      q_sub <- q[which(q$plt_cn %in% these_plots$plt_cn[plt]),]
-      w_sub <- w[which(w$plt_cn %in% these_plots$plt_cn[plt]),]
+    if (y == 1){
+      corrected_iter[y,1:nneigh] = rep(current_pnt, nneigh)
+    } else {
       
-      sf <- 1/(q_sub$invyr[1] - q_sub$prevyr[1])
-      
-      
-      if ((q_sub$tpasum[1] - q_sub$prevtpasum[1])==0){
-        fr_dbh_correction = 0 
-        fr_dbh_growth <-  (w_sub$diamean[1] - w_sub$prevdiamean[1]) * sf
-        
-        fr_den_correction = 0
-        fr_den_growth  <- (w_sub$tpasum.m[1] - w_sub$prevtpasum.m[1]) * sf
-        
-        fr_agb_correction = 0
-        
-        w_beta0s <- chojnacky_table$beta0[match(q_sub$paleon, as.character(chojnacky_table$level3a))]
-        w_beta1s <- chojnacky_table$beta1[match(q_sub$paleon, as.character(chojnacky_table$level3a))]
-        
-        # current plot
-        ### exp(b0 + b1*log(dbh))
-        w_agb_end           <- sum(exp(w_beta0s + w_beta1s*log(w_sub$dia_end)), na.rm = TRUE)
-        w_agb_Mg_end        <- w_agb_end * 1e-03 # kg to Mg
-        w_agb_Mg_plt_end    <- w_agb_Mg_end / (4*7.3152^2*pi) # Mg/m2
-        w_agb_Mg_ha_plt_end <- w_agb_Mg_plt_end / 1e-04  # Mg/m2 to Mg/ha
-        
-        # previous plot
-        ### exp(b0 + b1*log(dbh))
-        w_agb           <- sum(exp(w_beta0s + w_beta1s*log(w_sub$dia_begin)), na.rm = TRUE)
-        w_agb_Mg        <- w_agb * 1e-03 # kg to Mg
-        w_agb_Mg_plt    <- w_agb_Mg / (4*7.3152^2*pi) # Mg/m2
-        w_agb_Mg_ha_plt <- w_agb_Mg_plt / 1e-04  # Mg/m2 to Mg/ha
-        
-        
-        fr_agb_growth = (w_agb_Mg_ha_plt_end - w_agb_Mg_ha_plt)*sf
-      } else {  
-        
-        # q_dbh_correction <- (q_sub$diamean[1] - q_sub$prevdiamean[1]) * sf
-        # w_dbh_correction <- (w_sub$diamean[1] - w_sub$prevdiamean[1]) * sf
-        # 
-        # # observe fading now, but in past want not faded
-        # fr_dbh_correction <- (q_sub$diamean.m[1] - w_sub$prevdiamean.m[1]) * sf
-        fr_dbh_correction <- (q_sub$prevdiamean[1] - w_sub$prevdiamean[1]) * sf
-        fr_dbh_growth <-  (w_sub$diamean[1] - w_sub$prevdiamean[1]) * sf
-        
-        
-        q_den_correction  <- (q_sub$tpasum.m[1] - q_sub$prevtpasum.m[1]) * sf
-        fr_den_growth  <- (w_sub$tpasum.m[1] - w_sub$prevtpasum.m[1]) * sf
-        fr_den_correction <- (q_sub$prevtpasum.m[1] - w_sub$prevtpasum.m[1]) * sf
-        
-        q_beta0s <- chojnacky_table$beta0[match(q_sub$paleon, as.character(chojnacky_table$level3a))]
-        q_beta1s <- chojnacky_table$beta1[match(q_sub$paleon, as.character(chojnacky_table$level3a))]
-        
-        # current plot
-        ### exp(b0 + b1*log(dbh))
-        q_agb_end           <- sum(exp(q_beta0s + q_beta1s*log(q_sub$dia_end)), na.rm = TRUE)
-        q_agb_Mg_end        <- q_agb_end * 1e-03 # kg to Mg
-        q_agb_Mg_plt_end    <- q_agb_Mg_end / (4*7.3152^2*pi) # Mg/m2
-        q_agb_Mg_ha_plt_end <- q_agb_Mg_plt_end / 1e-04  # Mg/m2 to Mg/ha
-        
-        # previous plot
-        ### exp(b0 + b1*log(dbh))
-        q_agb           <- sum(exp(q_beta0s + q_beta1s*log(q_sub$dia_begin)), na.rm = TRUE)
-        q_agb_Mg        <- q_agb * 1e-03 # kg to Mg
-        q_agb_Mg_plt    <- q_agb_Mg / (4*7.3152^2*pi) # Mg/m2
-        q_agb_Mg_ha_plt <- q_agb_Mg_plt / 1e-04  # Mg/m2 to Mg/ha
-        
-        
-        q_agb_correction = (q_agb_Mg_ha_plt_end - q_agb_Mg_ha_plt)*sf
-        
-        
-        w_beta0s <- chojnacky_table$beta0[match(q_sub$paleon, as.character(chojnacky_table$level3a))]
-        w_beta1s <- chojnacky_table$beta1[match(q_sub$paleon, as.character(chojnacky_table$level3a))]
-        
-        # current plot
-        ### exp(b0 + b1*log(dbh))
-        w_agb_end           <- sum(exp(w_beta0s + w_beta1s*log(w_sub$dia_end)), na.rm = TRUE)
-        w_agb_Mg_end        <- w_agb_end * 1e-03 # kg to Mg
-        w_agb_Mg_plt_end    <- w_agb_Mg_end / (4*7.3152^2*pi) # Mg/m2
-        w_agb_Mg_ha_plt_end <- w_agb_Mg_plt_end / 1e-04  # Mg/m2 to Mg/ha
-        
-        # previous plot
-        ### exp(b0 + b1*log(dbh))
-        w_agb           <- sum(exp(w_beta0s + w_beta1s*log(w_sub$dia_begin)), na.rm = TRUE)
-        w_agb_Mg        <- w_agb * 1e-03 # kg to Mg
-        w_agb_Mg_plt    <- w_agb_Mg / (4*7.3152^2*pi) # Mg/m2
-        w_agb_Mg_ha_plt <- w_agb_Mg_plt / 1e-04  # Mg/m2 to Mg/ha
-        
-        
-        fr_agb_growth = (w_agb_Mg_ha_plt_end - w_agb_Mg_ha_plt)*sf
-        
-        fr_agb_correction = (q_agb_Mg_ha_plt - w_agb_Mg_ha_plt)*sf
-      }
-      
-      correction_dbhs[plt] = fr_dbh_correction #- fr_dbh_growth
-      correction_dens[plt] = fr_den_correction
-      correction_agbs[plt] = fr_agb_correction #- fr_agb_growth
-      
-    }
-    
-    return(data.frame(dbh=correction_dbhs, dens=correction_dens, agb=correction_agbs))
-  }
-  
-  apply_correction <- function(current_pnt, growth, correction){
-    
-    
-    
-    new_pnt = t(apply(correction, 1, function(x) x + current_pnt - growth))
-    
-    # new_pnt = current_pnt - growth + correction
-    
-    # new_pnt = current_pnt - growth + colMeans(correction) 
-    
-    return(new_pnt)
-  }
-  
-  ################################################################################################
-  
-  years <- 2012:1962
-  th <- 1
-  nneigh <- 3 # was 20
-  i <- y <- 1 
-  corrected_ab <- list()
-  
-  pdf('../../figures/fr_test.pdf')
-  # i can be 250
-  for( i in 1:50){
-    print(i)
-    
-    plot(12:40,seq(100,1200, length.out= length(12:40)),"n",xlab="dbh",ylab="dens",main=paste0("nneigh: ",nneigh, " i: ",i, " r: ", radd))
-    # arrows(meanB$diameanB,meanB$tpasumB,meanB$prevdiameanB,meanB$prevtpasumB, col="lightgray",
-    #        length=0.065, angle=22,lwd=1) 
-    legend("topright", legend =c("paleon tree_ring only", "paleon tr+census", "esm correction"),
-           col = c(2,1,4), lty=1)
-    corrected_ab[[i]] <- list()
-    #corrected_ab[[i]] <- matrix(NA, ncol = 3, nrow = length(years)+1)
-    
-    for( y in seq_along(years)){
-      
-      print(y)
-      
-      # draw the arrows
-      # non-fading arrow, we don't have this at every site
-      arrows(crec[[i]][y,1], crec[[i]][y,2], crec[[i]][y+1,1], crec[[i]][y+1,2], col=1,
-             length=0.065, angle=22)
-      # fading arrow
-      arrows(frec[[i]][y,1], frec[[i]][y,2], frec[[i]][y+1,1], frec[[i]][y+1,2], col=2,
-             length=0.065, angle=22)
-      
-      
-      if(y == 1){ 
-        # in the most recent year there is no fading issue
-        # use tr-only model to find the start
-        #corrected_ab[[i]][y,]  <- frec[[i]][y,, drop=FALSE]
-        
-        # find the closest FIA plots to the beginning of the red arrow
-        current_pnt  <- frec[[i]][y,, drop=FALSE]
-        previous_pnt <- frec[[i]][y+1,, drop=FALSE]
-        # these_plots <- search_esm(ab_lut, ab_lut_norm, current_pnt, th, mins, maxs, nneigh)
-        these_plots <- search_esm2(ab_lut, ab_lut_norm, current_pnt, th, mins, maxs, nneigh)
-        
-        # # these_plots_past_old <- update_ab(these_plots, q, 1)
-        # these_plots_past <- update_ab_current(these_plots, current_pnt, previous_pnt, q, 1)
-        correction = get_correction(these_plots, q, w)
-        these_plots = apply_correction(current_pnt, current_pnt - previous_pnt, correction)
-        
-        # these_plots =  these_plots[,2:4]
-        colnames(these_plots) = colnames(correction)
-        colnames(current_pnt) = colnames(correction)
-        corrected_ab[[i]][[y]] <- current_pnt #these_plots # fix this???
-        
-        # corrected_ab[[i]][[y+1]]  <- these_plots
-        corrected_ab[[i]][[y+1]]  <- these_plots[sample(seq(1,nrow(these_plots)), size=1, replace=FALSE),]
-        
-      } else {
-        # use corrected arrow of the precious iteration
-        # find the closest FIA plots to the beginning of the red arrow
-        current_pnts <- corrected_ab[[i]][[y]]
-        # previous_pnt <- frec[[i]][y+1,, drop=FALSE]
-        #current_pnt <- corrected_ab[[i]][y,,drop=FALSE]
-        
-        current_data  <- frec[[i]][y,, drop=FALSE]
-        previous_data <- frec[[i]][y+1,, drop=FALSE]
-        
-        # if there is only one current point
-        if (nrow(current_pnts)==1){
-          new_plots <- search_esm2(ab_lut, ab_lut_norm, current_pnts, th, mins, maxs, nneigh)
-          # new_plots <- update_ab(new_plots, q, 1)
-          # new_plots <- update_ab_current(new_plots, current_pnts, previous_pnt, q, 1)
-          correction = get_correction(new_plots, q, w)
-          new_plots = apply_correction(current_pnts, current_data-previous_data, correction)
-          
-          
-          # if there are two or more current points
-        } else if (nrow(current_pnts)>1){
-          # new_plots <- lapply(nrow(current_pnts), function(x){
-          #   tmp_plots <- search_esm2(ab_lut, ab_lut_norm, current_pnts[x,,drop=FALSE], th, mins, maxs, 
-          #                            nneigh, previous_pnt)
-          #   return(tmp_plots)
-          # })
-          new_plots = list()
-          for (r in 1:nrow(current_pnts)){
-            tmp_plots <- search_esm2(ab_lut, ab_lut_norm, current_pnts[r,,drop=FALSE], th, mins, maxs, 
-                                     nneigh)
-            correction = get_correction(tmp_plots, q, w)
-            tmp_plots = apply_correction(current_pnts[r,,drop=FALSE],  current_data-previous_data, correction)
-            new_plots[[r]] = tmp_plots
-          }
-          
-          new_plots <- new_plots[which(sapply(new_plots, nrow)>0)]
-          
-          if (length(new_plots)==0){
-            print("Cannot find an FIA plot near current value that satisfies assumptions.")
-          }
-          
-          new_plots <- lapply(new_plots, function(x) x[sample(seq(1,nrow(x)), size=1, replace=FALSE),])
-          # new_plots <- lapply(new_plots, function(x) apply(x, 2, median, na.rm=TRUE))
-         # new_plots <- lapply(new_plots, colMeans, na.rm=TRUE)
-          new_plots <- do.call("rbind",new_plots)
-        } else {
-          print("Missing current values for plot.")
-        }
-        
-        corrected_ab[[i]][[y+1]] <- new_plots
-        
-      }
-      
-      # if (nrow(corrected_ab[[i]][[y]])==1){
-        prev_arr = corrected_ab[[i]][[y]]
-      # } else {
-      #   prev_arr <- apply(corrected_ab[[i]][[y]], 2, mean, na.rm=TRUE)
-      # }
-      
-      # if (nrow(corrected_ab[[i]][[y+1]])==1){
-        next_arr = corrected_ab[[i]][[y+1]]
-      # } else {
-      #   next_arr <- apply(corrected_ab[[i]][[y+1]], 2, mean, na.rm=TRUE)
-      # }
-      
-      # corrected arrow
-      arrows(prev_arr[1], prev_arr[2], next_arr[1], next_arr[2], 
-             col=4, length=0.065, angle=22)
-      #arrows(corrected_ab[[i]][y,1], corrected_ab[[i]][y,2], 
-      #       corrected_ab[[i]][y+1,1], corrected_ab[[i]][y+1,2], 
-      #       col=4, length=0.065, angle=22)
-    }
-  }
-  dev.off()
-  
-  
-  
-  i <- 5
-  
-  corrected_list = do.call(rbind, lapply(corrected_ab[[i]], function(x) colMeans(x)))
-  plot(corrected_list[,3], crec[[i]][,3], xlim=c(140, 300), ylim=c(150, 300))
-  abline(0,1)
-  
-  plot(years, corrected_list[1:length(years),3], type="l")
-  lines(years, crec[[i]][1:length(years),3], col="blue")
-  lines(years, frec[[i]][1:length(years),3], col="red")
-  
-  
-  pdf('../../figures/fr_test_time.pdf')
-  # corrected_ab[[i]] <- NULL
-  y.list <- list()
-  # for(l in 1:52){
-    esm_correction <- list()
-    for(tyi in seq_along(corrected_ab)){
-      for (n in 1:nneigh){
-        tmp <- sapply(corrected_ab[[tyi]], function(x) x[,3])
-        tmp = t(do.call(rbind, tmp))
-        #tmp <- corrected_ab[[tyi]][,3]
-        # esm_correction = esm_correction
-      }
-      esm_correction[[tyi]] <- tmp#tmp[,l]
-    }
-    esm_correction = do.call(rbind, esm_correction)
-    y.list <- apply(esm_correction, 2, function(x) quantile(x,  c(0.025, 0.5, 0.975)))
-    #y.list[[l]] <- mean(unlist(esm_correction))
-  # }
-    
-    
-    
-    
-  ##################################################################################################
-  agbCI_f <- y.list#do.call("cbind", y.list)
-  #agbCI_f <- apply(esm_correction, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
-  agb_poly <- 1:dim(agbCI_f)[2]
-  
-  pal_tronly <-lapply(frec, function(x) x[,3])
-  pal_tronly <- do.call("rbind", pal_tronly)
-  and_CI_f <- apply(pal_tronly, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
-  
-  pal_tr_cen <-lapply(crec, function(x) x[,3])
-  pal_tr_cen <- do.call("rbind", pal_tr_cen)
-  and_CI <- apply(pal_tr_cen, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
-  
-  
-  
-  plot(agbCI_f[1,], ylim = c(50,  400), xaxt = "n",lwd = 3, xlab = "Years", ylab = "AB (Mg/ha)",
-       main = "HF - site 1", type = "n", cex.lab=1.5)
-  polygon(c(agb_poly, rev(agb_poly)),c((agbCI_f[3,]), rev(agbCI_f[1,])),col=adjustcolor("lightgray",alpha.f=0.5),border="darkgray", lwd =2)
-  lines(agbCI_f[2,], col = "darkgray", lwd=2)
-  polygon(c(agb_poly, rev(agb_poly)),c((and_CI_f[3,]), rev(and_CI_f[1,])),col=adjustcolor("lightpink",alpha.f=0.5),border="lightpink", lwd =2)
-  lines(and_CI_f[2,], col = "lightpink", lwd=2)
-  polygon(c(agb_poly, rev(agb_poly)),c((and_CI[3,]), rev(and_CI[1,])),col=adjustcolor("lightblue",alpha.f=0.5),border="lightblue3", lwd =2)
-  lines(and_CI[2,], col = "lightblue3", lwd=2)
-  legend("topright", col = c("darkgray", "lightblue3","lightpink"),
-         legend = c("corrected", "Raw + Census","Raw"),lty=1, lwd=3, cex=0.7)
-  yr <- 2012:(years[y])
-  axis(1, at=agb_poly, labels=yr)
-  dev.off()
-  
-  ######################################################################################################################################
-  ##
-  ######################################################################################################################################
-  
-  #load ab lut table
-  load("../../data/ab_lut_yr.Rdata")
-  
-  #normalize
-  ab_lut_norm <- ab_lut
-  mins <- apply(ab_lut[,2:4], 2, min)
-  maxs <- apply(ab_lut[,2:4], 2, max)
-  ab_lut_norm[,2] <- (ab_lut_norm[,2] - mins[1])/ (maxs[1]-mins[1])
-  ab_lut_norm[,3] <- (ab_lut_norm[,3] - mins[2]) / (maxs[2]-mins[2])
-  ab_lut_norm[,4] <- (ab_lut_norm[,4] - mins[3]) / (maxs[3]-mins[3])
-  
-  
-  # w fading
-  # q not fading
-  
-  years <- 2012:1961
-  th <- 1
-  nneigh <- 10 # was 20
-  i <- y <- 1 
-  
-  niter = length(frec)
-  correct = list(niter)
-  for (i in 1:niter){
-    print(i)
-    correct_these = list(length(years))
-    for (y in 1:length(years)){
-      current_pnt  <- frec[[i]][y,, drop=FALSE]
-      # previous_pnt <- frec[[i]][y+1,, drop=FALSE]
-      # these_plots <- search_esm(ab_lut, ab_lut_norm, current_pnt, th, mins, maxs, nneigh)
-      these_plots <- search_esm2(ab_lut, ab_lut_norm, current_pnt, th, mins, maxs, nneigh)
-      correct_these[[y]] <- get_correction(these_plots, q, w)
-    }
-    correct[[i]] = correct_these
-  }
-  ######################################################################################################################################
-  ## METHOD 0: If add back, only add back if correction is positive, otherwise add back 0
-  ######################################################################################################################################
-  
-  correct_cumsum <- matrix(NA, nrow=length(years), ncol=0)
-  for (iter in 1:length(correct)){
-    corrected_iter = matrix(NA, nrow=length(years), ncol=nneigh)
-    for (y in 1:(length(years))){
-      current_pnt = frec[[iter]][y,3]
-      previous_pnt = frec[[iter]][y-1,3]
-      
-      if (y == 1){
-        corrected_iter[y,1:nneigh] = rep(current_pnt, nneigh)
-      } else {
-        
-        # the actual correction
-        for (neigh in 1:nneigh){
-          sum_correction = 0
-          for (j in (y-1):1){
-            add_success = 1#rbinom(1, 1, 0.3)
-            if (add_success){
-              add_back = ifelse(correct[[iter]][[j]][neigh,3]>=0, correct[[iter]][[j]][neigh,3], 0)
-            } else {
-              add_back = 0
-            }
-            
-            sum_correction = sum_correction + add_back
-            
-          }
-          
-          corrected_iter[y,neigh] = current_pnt + sum_correction
-          
-        }
-      }
-      
-    }
-    correct_cumsum = cbind(correct_cumsum, corrected_iter)
-  }
-  
-  corrected_ab = data.frame(year=years, correct_cumsum)
-  corrected_ab_melt = melt(corrected_ab, id.vars=c('year'), factorsAsStrings = FALSE)
-  
-  agbCI_f <- apply(corrected_ab[,2:ncol(corrected_ab)], 1, function(x) quantile(x,  c(0.025, 0.5, 0.975), na.rm=TRUE))
-  # agbCI_f <- do.call("cbind", y.list)
-  #agbCI_f <- apply(esm_correction, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
-  agb_poly <- 1:dim(agbCI_f)[2]
-  
-  pal_tronly <-lapply(frec, function(x) x[,3])
-  pal_tronly <- do.call("rbind", pal_tronly)
-  and_CI_f <- apply(pal_tronly, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
-  
-  pal_tr_cen <-lapply(crec, function(x) x[,3])
-  pal_tr_cen <- do.call("rbind", pal_tr_cen)
-  and_CI <- apply(pal_tr_cen, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
-  
-  
-  # pdf('../../figures/FADING-METHOD0-BIOMASS.pdf', width=12, height=10)
-  png('../../figures/FADING-METHOD0-BIOMASS.png', width=620, height=480)
-  plot(agbCI_f[1,], ylim = c(100,  320), xaxt = "n",lwd = 3, xlab = "Years", ylab = "AB (Mg/ha)",
-       main = "HF - site 1", type = "n", cex.lab=1.5)
-  polygon(c(agb_poly, rev(agb_poly)),c((agbCI_f[3,]), rev(agbCI_f[1,])),col=adjustcolor("lightgray",alpha.f=0.5),border="darkgray", lwd =2)
-  lines(agbCI_f[2,], col = "darkgray", lwd=2)
-  polygon(c(agb_poly, rev(agb_poly)),c((and_CI_f[3,]), rev(and_CI_f[1,])),col=adjustcolor("lightpink",alpha.f=0.5),border="lightpink", lwd =2)
-  lines(and_CI_f[2,], col = "lightpink", lwd=2)
-  polygon(c(agb_poly, rev(agb_poly)),c((and_CI[3,]), rev(and_CI[1,])),col=adjustcolor("lightblue",alpha.f=0.5),border="lightblue3", lwd =2)
-  lines(and_CI[2,], col = "lightblue3", lwd=2)
-  legend("topright", col = c("darkgray", "lightblue3","lightpink"),
-         legend = c("corrected", "Raw + Census","Raw"),lty=1, lwd=3, cex=0.7)
-  yr <- 2012:(years[y])
-  axis(1, at=agb_poly, labels=yr)
-  dev.off()
-  
-  
-  ######################################################################################################################################
-  ## METHOD 1: Draw from a bernoulli with 30% chance that we need to add something back
-  ## If add back, only add back if correction is positive, otherwise add back 0
-  ######################################################################################################################################
-  
-  correct_cumsum <- matrix(NA, nrow=length(years), ncol=0)
-  for (iter in 1:length(correct)){
-    corrected_iter = matrix(NA, nrow=length(years), ncol=nneigh)
-    for (y in 1:(length(years))){
-      current_pnt = frec[[iter]][y,3]
-      previous_pnt = frec[[iter]][y-1,3]
-      
-      if (y == 1){
-        corrected_iter[y,1:nneigh] = rep(current_pnt, nneigh)
-      } else {
-        
-        # the actual correction
-        for (neigh in 1:nneigh){
-          sum_correction = 0
-          for (j in (y-1):1){
-            add_success = rbinom(1, 1, 0.3)
-            if (add_success){
-              add_back = ifelse(correct[[iter]][[j]][neigh,3]>=0, correct[[iter]][[j]][neigh,3], 0)
-            } else {
-              add_back = 0
-            }
-            
-            sum_correction = sum_correction + add_back
-            
-          }
-          
-          corrected_iter[y,neigh] = current_pnt + sum_correction
-          
-        }
-      }
-      
-    }
-    correct_cumsum = cbind(correct_cumsum, corrected_iter)
-  }
-  
-  corrected_ab = data.frame(year=years, correct_cumsum)
-  corrected_ab_melt = melt(corrected_ab, id.vars=c('year'), factorsAsStrings = FALSE)
-  
-  agbCI_f <- apply(corrected_ab[,2:ncol(corrected_ab)], 1, function(x) quantile(x,  c(0.025, 0.5, 0.975), na.rm=TRUE))
-  # agbCI_f <- do.call("cbind", y.list)
-  #agbCI_f <- apply(esm_correction, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
-  agb_poly <- 1:dim(agbCI_f)[2]
-  
-  pal_tronly <-lapply(frec, function(x) x[,3])
-  pal_tronly <- do.call("rbind", pal_tronly)
-  and_CI_f <- apply(pal_tronly, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
-  
-  pal_tr_cen <-lapply(crec, function(x) x[,3])
-  pal_tr_cen <- do.call("rbind", pal_tr_cen)
-  and_CI <- apply(pal_tr_cen, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
-  
-  
-  # pdf('../../figures/FADING-METHOD1-BIOMASS.pdf', width=12, height=10)
-  png('../../figures/FADING-METHOD1-BIOMASS.png', width=620, height=480)
-  plot(agbCI_f[1,], ylim = c(100,  320), xaxt = "n",lwd = 3, xlab = "Years", ylab = "AB (Mg/ha)",
-       main = "HF - site 1", type = "n", cex.lab=1.5)
-  polygon(c(agb_poly, rev(agb_poly)),c((agbCI_f[3,]), rev(agbCI_f[1,])),col=adjustcolor("lightgray",alpha.f=0.5),border="darkgray", lwd =2)
-  lines(agbCI_f[2,], col = "darkgray", lwd=2)
-  polygon(c(agb_poly, rev(agb_poly)),c((and_CI_f[3,]), rev(and_CI_f[1,])),col=adjustcolor("lightpink",alpha.f=0.5),border="lightpink", lwd =2)
-  lines(and_CI_f[2,], col = "lightpink", lwd=2)
-  polygon(c(agb_poly, rev(agb_poly)),c((and_CI[3,]), rev(and_CI[1,])),col=adjustcolor("lightblue",alpha.f=0.5),border="lightblue3", lwd =2)
-  lines(and_CI[2,], col = "lightblue3", lwd=2)
-  legend("topright", col = c("darkgray", "lightblue3","lightpink"),
-         legend = c("corrected", "Raw + Census","Raw"),lty=1, lwd=3, cex=0.7)
-  yr <- 2012:(years[y])
-  axis(1, at=agb_poly, labels=yr)
-  dev.off()
-  
-  ######################################################################################################################################
-  ## METHOD 2: Draw from a bernoulli with 60% chance that we need to add something back
-  ## If add back, and if correction is positive, add back something that is drawn from a distribution centered around correction
-  ######################################################################################################################################
-  
-  # now try with many iters fixing sum_correction to be equal to or large than it was in previous year
-  correct_cumsum <- matrix(NA, nrow=length(years), ncol=0)
-  for (iter in 1:length(correct)){
-    corrected_iter = matrix(NA, nrow=length(years), ncol=nneigh)
-    sum_correction_iter = matrix(0, nrow=length(years), ncol=nneigh)
-    for (y in 1:(length(years))){
-      current_pnt = frec[[iter]][y,3]
-      previous_pnt = frec[[iter]][y-1,3]
-      
-      if (y == 1){
-        corrected_iter[y,1:nneigh] = rep(current_pnt, nneigh)
-      } else {
-        
-        # the actual correction
-        for (neigh in 1:nneigh){
-          sum_correction = 0
-          
-          add_success = rbinom(1, 1, 0.6)
+      # the actual correction
+      for (neigh in 1:nneigh){
+        sum_correction = 0
+        for (j in (y-1):1){
+          add_success = 1#rbinom(1, 1, 0.3)
           if (add_success){
-            # add_back = ifelse(correct[[iter]][[j]][neigh,3]>0, correct[[iter]][[j]][neigh,3], 0)
-            add_back = ifelse(correct[[iter]][[j]][neigh,3]>0, runif(1, 1/2*correct[[iter]][[j]][neigh,3], 1.5*correct[[iter]][[j]][neigh,3]), 0)
-            # add_back = ifelse(correct[[iter]][[j]][neigh,3]>0, rtruncnorm(1, 
-            #                                                               a=0, 
-            #                                                               b=2*correct[[iter]][[j]][neigh,3], 
-            #                                                               mean=correct[[iter]][[j]][neigh,3],
-            #                                                               sd=0.5), 0)
+            add_back = ifelse(correct[[iter]][[j]][neigh,3]>=0, correct[[iter]][[j]][neigh,3], 0)
           } else {
             add_back = 0
           }
           
-          sum_correction_iter[y,neigh] = sum_correction_iter[y-1,neigh] + add_back
-          
-          corrected_iter[y,neigh] = current_pnt + sum_correction_iter[y,neigh]
+          sum_correction = sum_correction + add_back
           
         }
-      }
-      
-    }
-    correct_cumsum = cbind(correct_cumsum, corrected_iter)
-  }
-  
-  corrected_ab = data.frame(year=years, correct_cumsum)
-  corrected_ab_melt = melt(corrected_ab, id.vars=c('year'), factorsAsStrings = FALSE)
-  
-  agbCI_f <- apply(corrected_ab[,2:ncol(corrected_ab)], 1, function(x) quantile(x,  c(0.025, 0.5, 0.975), na.rm=TRUE))
-  # agbCI_f <- do.call("cbind", y.list)
-  #agbCI_f <- apply(esm_correction, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
-  agb_poly <- 1:dim(agbCI_f)[2]
-  
-  pal_tronly <-lapply(frec, function(x) x[,3])
-  pal_tronly <- do.call("rbind", pal_tronly)
-  and_CI_f <- apply(pal_tronly, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
-  
-  pal_tr_cen <-lapply(crec, function(x) x[,3])
-  pal_tr_cen <- do.call("rbind", pal_tr_cen)
-  and_CI <- apply(pal_tr_cen, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
-  
-  
-  # pdf('../../figures/FADING-METHOD2-BIOMASS.pdf', width=12, height=10)
-  png('../../figures/FADING-METHOD2-BIOMASS.png', width=620, height=480)
-  plot(agbCI_f[1,], ylim = c(100,  320), xaxt = "n",lwd = 3, xlab = "Years", ylab = "AB (Mg/ha)",
-       main = "HF - site 1", type = "n", cex.lab=1.5)
-  polygon(c(agb_poly, rev(agb_poly)),c((agbCI_f[3,]), rev(agbCI_f[1,])),col=adjustcolor("lightgray",alpha.f=0.5),border="darkgray", lwd =2)
-  lines(agbCI_f[2,], col = "darkgray", lwd=2)
-  polygon(c(agb_poly, rev(agb_poly)),c((and_CI_f[3,]), rev(and_CI_f[1,])),col=adjustcolor("lightpink",alpha.f=0.5),border="lightpink", lwd =2)
-  lines(and_CI_f[2,], col = "lightpink", lwd=2)
-  polygon(c(agb_poly, rev(agb_poly)),c((and_CI[3,]), rev(and_CI[1,])),col=adjustcolor("lightblue",alpha.f=0.5),border="lightblue3", lwd =2)
-  lines(and_CI[2,], col = "lightblue3", lwd=2)
-  legend("topright", col = c("darkgray", "lightblue3","lightpink"),
-         legend = c("corrected", "Raw + Census","Raw"),lty=1, lwd=3, cex=0.7)
-  yr <- 2012:(years[y])
-  axis(1, at=agb_poly, labels=yr)
-  dev.off()
-  
-  
-  ######################################################################################################################################
-  ## METHOD 3: If correction is positive, draw correction from uniform from 0 to correction
-  ## 
-  ######################################################################################################################################
-
-  # now try with instead of binom, drawing from uniform from 0 to change
-  correct_cumsum <- matrix(NA, nrow=length(years), ncol=0)
-  for (iter in 1:length(correct)){
-    corrected_iter = matrix(NA, nrow=length(years), ncol=nneigh)
-    sum_correction_iter = matrix(0, nrow=length(years), ncol=nneigh)
-    for (y in 1:(length(years))){
-      current_pnt = frec[[iter]][y,3]
-      previous_pnt = frec[[iter]][y-1,3]
-      
-      if (y == 1){
-        corrected_iter[y,1:nneigh] = rep(current_pnt, nneigh)
-      } else {
         
-        # the actual correction
-        for (neigh in 1:nneigh){
-          sum_correction = 0
-          
-          # add_success = rbinom(1, 1, 0.5)
-          # if (add_success){
-          #   add_back = ifelse(correct[[iter]][[j]][neigh,3]>0, correct[[iter]][[j]][neigh,3], 0)
-          # } else {
-          #   add_back = 0
-          # }
-          if (correct[[iter]][[j]][neigh,3]>0){
-           add_back = runif(1, min=0, max=correct[[iter]][[j]][neigh,3])
+        corrected_iter[y,neigh] = current_pnt + sum_correction
+        
+      }
+    }
+    
+  }
+  correct_cumsum = cbind(correct_cumsum, corrected_iter)
+}
+
+corrected_ab = data.frame(year=years, correct_cumsum)
+corrected_ab_melt = melt(corrected_ab, id.vars=c('year'), factorsAsStrings = FALSE)
+
+agbCI_f <- apply(corrected_ab[,2:ncol(corrected_ab)], 1, function(x) quantile(x,  c(0.025, 0.5, 0.975), na.rm=TRUE))
+# agbCI_f <- do.call("cbind", y.list)
+#agbCI_f <- apply(esm_correction, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
+agb_poly <- 1:dim(agbCI_f)[2]
+
+pal_tronly <-lapply(frec, function(x) x[,3])
+pal_tronly <- do.call("rbind", pal_tronly)
+and_CI_f <- apply(pal_tronly, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
+
+pal_tr_cen <-lapply(crec, function(x) x[,3])
+pal_tr_cen <- do.call("rbind", pal_tr_cen)
+and_CI <- apply(pal_tr_cen, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
+
+
+# pdf('../../figures/FADING-METHOD0-BIOMASS.pdf', width=12, height=10)
+png('../../figures/FADING-METHOD0-BIOMASS.png', width=620, height=480)
+plot(agbCI_f[1,], ylim = c(100,  320), xaxt = "n",lwd = 3, xlab = "Years", ylab = "AB (Mg/ha)",
+     main = "HF - site 1", type = "n", cex.lab=1.5)
+polygon(c(agb_poly, rev(agb_poly)),c((agbCI_f[3,]), rev(agbCI_f[1,])),col=adjustcolor("lightgray",alpha.f=0.5),border="darkgray", lwd =2)
+lines(agbCI_f[2,], col = "darkgray", lwd=2)
+polygon(c(agb_poly, rev(agb_poly)),c((and_CI_f[3,]), rev(and_CI_f[1,])),col=adjustcolor("lightpink",alpha.f=0.5),border="lightpink", lwd =2)
+lines(and_CI_f[2,], col = "lightpink", lwd=2)
+polygon(c(agb_poly, rev(agb_poly)),c((and_CI[3,]), rev(and_CI[1,])),col=adjustcolor("lightblue",alpha.f=0.5),border="lightblue3", lwd =2)
+lines(and_CI[2,], col = "lightblue3", lwd=2)
+legend("topright", col = c("darkgray", "lightblue3","lightpink"),
+       legend = c("corrected", "Raw + Census","Raw"),lty=1, lwd=3, cex=0.7)
+yr <- 2012:(years[y])
+axis(1, at=agb_poly, labels=yr)
+dev.off()
+
+
+######################################################################################################################################
+## METHOD 1: Draw from a bernoulli with 30% chance that we need to add something back
+## If add back, only add back if correction is positive, otherwise add back 0
+######################################################################################################################################
+
+correct_cumsum <- matrix(NA, nrow=length(years), ncol=0)
+for (iter in 1:length(correct)){
+  corrected_iter = matrix(NA, nrow=length(years), ncol=nneigh)
+  for (y in 1:(length(years))){
+    current_pnt = frec[[iter]][y,3]
+    previous_pnt = frec[[iter]][y-1,3]
+    
+    if (y == 1){
+      corrected_iter[y,1:nneigh] = rep(current_pnt, nneigh)
+    } else {
+      
+      # the actual correction
+      for (neigh in 1:nneigh){
+        sum_correction = 0
+        for (j in (y-1):1){
+          add_success = rbinom(1, 1, 0.3)
+          if (add_success){
+            add_back = ifelse(correct[[iter]][[j]][neigh,3]>=0, correct[[iter]][[j]][neigh,3], 0)
           } else {
-            add_back=0
+            add_back = 0
           }
           
-          sum_correction_iter[y,neigh] = sum_correction_iter[y-1,neigh] + add_back
-          
-          corrected_iter[y,neigh] = current_pnt + sum_correction_iter[y,neigh]
+          sum_correction = sum_correction + add_back
           
         }
+        
+        corrected_iter[y,neigh] = current_pnt + sum_correction
+        
       }
-      
     }
-    correct_cumsum = cbind(correct_cumsum, corrected_iter)
+    
   }
-  
-  corrected_ab = data.frame(year=years, correct_cumsum)
-  corrected_ab_melt = melt(corrected_ab, id.vars=c('year'), factorsAsStrings = FALSE)
-  
-  agbCI_f <- apply(corrected_ab[,2:ncol(corrected_ab)], 1, function(x) quantile(x,  c(0.025, 0.5, 0.975), na.rm=TRUE))
-  # agbCI_f <- do.call("cbind", y.list)
-  #agbCI_f <- apply(esm_correction, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
-  agb_poly <- 1:dim(agbCI_f)[2]
-  
-  pal_tronly <-lapply(frec, function(x) x[,3])
-  pal_tronly <- do.call("rbind", pal_tronly)
-  and_CI_f <- apply(pal_tronly, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
-  
-  pal_tr_cen <-lapply(crec, function(x) x[,3])
-  pal_tr_cen <- do.call("rbind", pal_tr_cen)
-  and_CI <- apply(pal_tr_cen, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
-  
-  
-  # pdf('../../figures/FADING-METHOD3-BIOMASS.pdf', width=12, height=10)
-  png('../../figures/FADING-METHOD3-BIOMASS.png', width=620, height=480)
-  plot(agbCI_f[1,], ylim = c(100,  320), xaxt = "n",lwd = 3, xlab = "Years", ylab = "AB (Mg/ha)",
-       main = "HF - site 1", type = "n", cex.lab=1.5)
-  polygon(c(agb_poly, rev(agb_poly)),c((agbCI_f[3,]), rev(agbCI_f[1,])),col=adjustcolor("lightgray",alpha.f=0.5),border="darkgray", lwd =2)
-  lines(agbCI_f[2,], col = "darkgray", lwd=2)
-  polygon(c(agb_poly, rev(agb_poly)),c((and_CI_f[3,]), rev(and_CI_f[1,])),col=adjustcolor("lightpink",alpha.f=0.5),border="lightpink", lwd =2)
-  lines(and_CI_f[2,], col = "lightpink", lwd=2)
-  polygon(c(agb_poly, rev(agb_poly)),c((and_CI[3,]), rev(and_CI[1,])),col=adjustcolor("lightblue",alpha.f=0.5),border="lightblue3", lwd =2)
-  lines(and_CI[2,], col = "lightblue3", lwd=2)
-  legend("topright", col = c("darkgray", "lightblue3","lightpink"),
-         legend = c("corrected", "Raw + Census","Raw"),lty=1, lwd=3, cex=0.7)
-  yr <- 2012:(years[y])
-  axis(1, at=agb_poly, labels=yr)
-  dev.off()
-  
-  ######################################################################################################################################
-  ## apply cumulative sum correction
-  ######################################################################################################################################
-  
-  
-  # # works
-  # correct_cumsum <- matrix(NA, nrow=length(years), ncol=0)
-  # for (iter in 1:length(correct)){
-  #   corrected_iter = matrix(NA, nrow=length(years), ncol=nneigh)
-  #   for (i in 1:(length(years))){
-  #     current_pnt = frec[[iter]][i,3]
-  #     previous_pnt = frec[[iter]][i-1,3]
-  # 
-  #     if (i == 1){
-  #       corrected_iter[i,1:nneigh] = rep(current_pnt, nneigh)
-  #     } else {
-  #       if (sign(correct[[iter]][[i-1]][1,3])==1){
-  #         sum_correction = 0
-  #         for (j in (i-1):1){
-  #           if (sign(correct[[iter]][[j]][,3]) ==1){
-  #             sum_correction = sum_correction + correct[[iter]][[j]][,3]
-  #           }
-  #         }
-  #         corrected_iter[i,1:nneigh] = current_pnt + sum_correction
-  #       } else {
-  #         corrected_iter[i,1:nneigh] = NA
-  #       }
-  #     }
-  # 
-  #   }
-  #   correct_cumsum = cbind(correct_cumsum, corrected_iter)
-  # }
+  correct_cumsum = cbind(correct_cumsum, corrected_iter)
+}
 
-  library(reshape2)
-  corrected_ab = data.frame(year=years, correct_cumsum)
+corrected_ab = data.frame(year=years, correct_cumsum)
+corrected_ab_melt = melt(corrected_ab, id.vars=c('year'), factorsAsStrings = FALSE)
+
+agbCI_f <- apply(corrected_ab[,2:ncol(corrected_ab)], 1, function(x) quantile(x,  c(0.025, 0.5, 0.975), na.rm=TRUE))
+# agbCI_f <- do.call("cbind", y.list)
+#agbCI_f <- apply(esm_correction, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
+agb_poly <- 1:dim(agbCI_f)[2]
+
+pal_tronly <-lapply(frec, function(x) x[,3])
+pal_tronly <- do.call("rbind", pal_tronly)
+and_CI_f <- apply(pal_tronly, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
+
+pal_tr_cen <-lapply(crec, function(x) x[,3])
+pal_tr_cen <- do.call("rbind", pal_tr_cen)
+and_CI <- apply(pal_tr_cen, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
 
 
-  corrected_ab_melt = melt(corrected_ab, id.vars=c('year'), factorsAsStrings = FALSE)
-  
-  
-  
-  
+# pdf('../../figures/FADING-METHOD1-BIOMASS.pdf', width=12, height=10)
+png('../../figures/FADING-METHOD1-BIOMASS.png', width=620, height=480)
+plot(agbCI_f[1,], ylim = c(100,  320), xaxt = "n",lwd = 3, xlab = "Years", ylab = "AB (Mg/ha)",
+     main = "HF - site 1", type = "n", cex.lab=1.5)
+polygon(c(agb_poly, rev(agb_poly)),c((agbCI_f[3,]), rev(agbCI_f[1,])),col=adjustcolor("lightgray",alpha.f=0.5),border="darkgray", lwd =2)
+lines(agbCI_f[2,], col = "darkgray", lwd=2)
+polygon(c(agb_poly, rev(agb_poly)),c((and_CI_f[3,]), rev(and_CI_f[1,])),col=adjustcolor("lightpink",alpha.f=0.5),border="lightpink", lwd =2)
+lines(and_CI_f[2,], col = "lightpink", lwd=2)
+polygon(c(agb_poly, rev(agb_poly)),c((and_CI[3,]), rev(and_CI[1,])),col=adjustcolor("lightblue",alpha.f=0.5),border="lightblue3", lwd =2)
+lines(and_CI[2,], col = "lightblue3", lwd=2)
+legend("topright", col = c("darkgray", "lightblue3","lightpink"),
+       legend = c("corrected", "Raw + Census","Raw"),lty=1, lwd=3, cex=0.7)
+yr <- 2012:(years[y])
+axis(1, at=agb_poly, labels=yr)
+dev.off()
 
-  agbCI_f <- apply(corrected_ab[,2:ncol(corrected_ab)], 1, function(x) quantile(x,  c(0.025, 0.5, 0.975), na.rm=TRUE))
-  # agbCI_f <- do.call("cbind", y.list)
-  #agbCI_f <- apply(esm_correction, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
-  agb_poly <- 1:dim(agbCI_f)[2]
+######################################################################################################################################
+## METHOD 2: Draw from a bernoulli with 60% chance that we need to add something back
+## If add back, and if correction is positive, add back something that is drawn from a distribution centered around correction
+######################################################################################################################################
 
-  pal_tronly <-lapply(frec, function(x) x[,3])
-  pal_tronly <- do.call("rbind", pal_tronly)
-  and_CI_f <- apply(pal_tronly, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
-
-  pal_tr_cen <-lapply(crec, function(x) x[,3])
-  pal_tr_cen <- do.call("rbind", pal_tr_cen)
-  and_CI <- apply(pal_tr_cen, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
-
-
-  # pdf('../../figures/correct_biomass_cumsum.pdf')
-  plot(agbCI_f[1,], ylim = c(100,  320), xaxt = "n",lwd = 3, xlab = "Years", ylab = "AB (Mg/ha)",
-       main = "HF - site 1", type = "n", cex.lab=1.5)
-  polygon(c(agb_poly, rev(agb_poly)),c((agbCI_f[3,]), rev(agbCI_f[1,])),col=adjustcolor("lightgray",alpha.f=0.5),border="darkgray", lwd =2)
-  lines(agbCI_f[2,], col = "darkgray", lwd=2)
-  polygon(c(agb_poly, rev(agb_poly)),c((and_CI_f[3,]), rev(and_CI_f[1,])),col=adjustcolor("lightpink",alpha.f=0.5),border="lightpink", lwd =2)
-  lines(and_CI_f[2,], col = "lightpink", lwd=2)
-  polygon(c(agb_poly, rev(agb_poly)),c((and_CI[3,]), rev(and_CI[1,])),col=adjustcolor("lightblue",alpha.f=0.5),border="lightblue3", lwd =2)
-  lines(and_CI[2,], col = "lightblue3", lwd=2)
-  legend("topright", col = c("darkgray", "lightblue3","lightpink"),
-         legend = c("corrected", "Raw + Census","Raw"),lty=1, lwd=3, cex=0.7)
-  yr <- 2012:(years[y])
-  axis(1, at=agb_poly, labels=yr)
-  # dev.off()
-
-  
-  
-  ## not sure if this works
-  corrected_ab <- matrix(NA, nrow=length(years), ncol=0)
-  for (iter in 1:length(correct)){
-    corrected_iter = matrix(NA, nrow=length(years), ncol=nneigh)
-    for (i in 1:(length(years))){
-      current_pnt = frec[[iter]][i,3]
-      previous_pnt = frec[[iter]][i-1,3]
+# now try with many iters fixing sum_correction to be equal to or large than it was in previous year
+correct_cumsum <- matrix(NA, nrow=length(years), ncol=0)
+for (iter in 1:length(correct)){
+  corrected_iter = matrix(NA, nrow=length(years), ncol=nneigh)
+  sum_correction_iter = matrix(0, nrow=length(years), ncol=nneigh)
+  for (y in 1:(length(years))){
+    current_pnt = frec[[iter]][y,3]
+    previous_pnt = frec[[iter]][y-1,3]
+    
+    if (y == 1){
+      corrected_iter[y,1:nneigh] = rep(current_pnt, nneigh)
+    } else {
       
-      if (i == 1){
-        corrected_iter[i,1:nneigh] = rep(current_pnt, nneigh)
-      } else {
-        if(sign(correct[[iter]][[i-1]][1,3])==1){
-          corrected_iter[i,1:nneigh] = current_pnt + correct[[iter]][[i-1]][,3]
+      # the actual correction
+      for (neigh in 1:nneigh){
+        sum_correction = 0
+        
+        add_success = rbinom(1, 1, 0.6)
+        if (add_success){
+          # add_back = ifelse(correct[[iter]][[j]][neigh,3]>0, correct[[iter]][[j]][neigh,3], 0)
+          add_back = ifelse(correct[[iter]][[j]][neigh,3]>0, runif(1, 1/2*correct[[iter]][[j]][neigh,3], 1.5*correct[[iter]][[j]][neigh,3]), 0)
+          # add_back = ifelse(correct[[iter]][[j]][neigh,3]>0, rtruncnorm(1, 
+          #                                                               a=0, 
+          #                                                               b=2*correct[[iter]][[j]][neigh,3], 
+          #                                                               mean=correct[[iter]][[j]][neigh,3],
+          #                                                               sd=0.5), 0)
         } else {
-          corrected_iter[i,1:nneigh] = NA
+          add_back = 0
         }
+        
+        sum_correction_iter[y,neigh] = sum_correction_iter[y-1,neigh] + add_back
+        
+        corrected_iter[y,neigh] = current_pnt + sum_correction_iter[y,neigh]
+        
       }
-      
     }
-    corrected_ab = cbind(corrected_ab, corrected_iter)
+    
   }
-  
-  corrected_ab = data.frame(year=years, corrected_ab)
-  
-  
-  library(reshape2)
-  corrected_ab_melt = melt(corrected_ab, id.vars=c('year'), factorsAsStrings = FALSE)
-  
-  agbCI_f <- apply(corrected_ab[,2:ncol(corrected_ab)], 1, function(x) quantile(x,  c(0.025, 0.5, 0.975), na.rm=TRUE))
-  # agbCI_f <- do.call("cbind", y.list)
-  #agbCI_f <- apply(esm_correction, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
-  agb_poly <- 1:dim(agbCI_f)[2]
-  
-  pal_tronly <-lapply(frec, function(x) x[,3])
-  pal_tronly <- do.call("rbind", pal_tronly)
-  and_CI_f <- apply(pal_tronly, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
-  
-  pal_tr_cen <-lapply(crec, function(x) x[,3])
-  pal_tr_cen <- do.call("rbind", pal_tr_cen)
-  and_CI <- apply(pal_tr_cen, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
-  
-  
-  pdf('../../figures/correct_biomass.pdf')
-  plot(agbCI_f[1,], ylim = c(50,  400), xaxt = "n",lwd = 3, xlab = "Years", ylab = "AB (Mg/ha)",
-       main = "HF - site 1", type = "n", cex.lab=1.5)
-  polygon(c(agb_poly, rev(agb_poly)),c((agbCI_f[3,]), rev(agbCI_f[1,])),col=adjustcolor("lightgray",alpha.f=0.5),border="darkgray", lwd =2)
-  lines(agbCI_f[2,], col = "darkgray", lwd=2)
-  polygon(c(agb_poly, rev(agb_poly)),c((and_CI_f[3,]), rev(and_CI_f[1,])),col=adjustcolor("lightpink",alpha.f=0.5),border="lightpink", lwd =2)
-  lines(and_CI_f[2,], col = "lightpink", lwd=2)
-  polygon(c(agb_poly, rev(agb_poly)),c((and_CI[3,]), rev(and_CI[1,])),col=adjustcolor("lightblue",alpha.f=0.5),border="lightblue3", lwd =2)
-  lines(and_CI[2,], col = "lightblue3", lwd=2)
-  legend("topright", col = c("darkgray", "lightblue3","lightpink"),
-         legend = c("corrected", "Raw + Census","Raw"),lty=1, lwd=3, cex=0.7)
-  yr <- 2012:(years[y])
-  axis(1, at=agb_poly, labels=yr)
-  dev.off()
-  
-  
-  # 
-  # 
-  # # this function rescales the 5-yr ESM arrow and calculates AB
-  # get_correction <- function(these_plots_cur, current_pnt, previous_pnt, esm, sfc){
-  #   rescaled_mean_dbhs <- rep(NA, nrow(these_plots_cur))
-  #   rescaled_mean_dens <- rep(NA, nrow(these_plots_cur))
-  #   rescaled_mean_agbs <- rep(NA, nrow(these_plots_cur))
-  #   
-  #   #recalculate ab allometrically for rescaled
-  #   for(p in seq_len(nrow(these_plots_cur))){
-  #     
-  #     sub_plot <- esm[esm$plt_cn == these_plots_cur$plt_cn[p], ] 
-  #     
-  #     # first scale esm to per year rate
-  #     sf <- 1/(sub_plot$invyr[1] - sub_plot$prevyr[1])
-  #     # new_dbh <- sub_plot$diamean.m[1] + (sub_plot$prevdiamean.m[1] - sub_plot$diamean.m[1]) * sf
-  #     # prcnt_dbh <- ((new_dbh- sub_plot$prevdiamean.m[1])/ sub_plot$prevdiamean.m[1])*100
-  #     # sub_plot$dia_begin <- sub_plot$dia_begin + (sub_plot$dia_begin * prcnt_dbh/100)
-  #     dbh_correction <- (sub_plot$diamean.m[1] - sub_plot$prevdiamean.m[1]) * sf
-  #     
-  #     # new_den <- sub_plot$tpasum.m[1] + (sub_plot$prevtpasum.m[1] - sub_plot$tpasum.m[1]) * sf
-  #     # prcnt_den <- (new_den- sub_plot$prevtpasum.m[1])/ sub_plot$prevtpasum.m[1]*100
-  #     # sub_plot$start1tpa <- sub_plot$start1tpa + (sub_plot$start1tpa * prcnt_den/100)
-  #     den_correction <- (sub_plot$tpasum.m[1] - sub_plot$prevtpasum.m[1]) * sf
-  #     
-  #     # if we want to update the rescaling the arrow with site specific magnitudes (using sfc) do it here
-  #     
-  #     #new_dbh <- sub_plot$diamean[1] + (mean(sub_plot$dia_begin,na.rm=TRUE)-sub_plot$diamean[1])*sfc
-  #     #new_den <- sub_plot$tpasum[1] + (sum(sub_plot$start1tpa,na.rm=TRUE)-sub_plot$tpasum[1])*sfc
-  #     
-  #     #prcnt_dbh <- (new_dbh- mean(sub_plot$dia_begin,na.rm=TRUE))/ mean(sub_plot$dia_begin,na.rm=TRUE)*100
-  #     #prcnt_den <- (new_den- sum(sub_plot$start1tpa,na.rm=TRUE))/ sum(sub_plot$start1tpa,na.rm=TRUE)*100
-  #     
-  #     #sub_plot$dia_begin <- sub_plot$dia_begin + (sub_plot$dia_begin * prcnt_dbh/100)
-  #     #sub_plot$start1tpa <- sub_plot$start1tpa + (sub_plot$start1tpa * prcnt_den/100)
-  #     
-  #     beta0s <- chojnacky_table$beta0[match(sub_plot$paleon, as.character(chojnacky_table$level3a))]
-  #     beta1s <- chojnacky_table$beta1[match(sub_plot$paleon, as.character(chojnacky_table$level3a))]
-  #     
-  #     # current plot
-  #     ### exp(b0 + b1*log(dbh))
-  #     agb_end           <- sum(exp(beta0s + beta1s*log(sub_plot$dia_end* 2.54)), na.rm = TRUE)
-  #     agb_Mg_end        <- agb_end * 1e-03 # kg to Mg
-  #     agb_Mg_plt_end    <- agb_Mg_end / (4*7.3152^2*pi) # Mg/m2
-  #     agb_Mg_ha_plt_end <- agb_Mg_plt_end / 1e-04  # Mg/m2 to Mg/ha
-  #     
-  #     # previous plot
-  #     ### exp(b0 + b1*log(dbh))
-  #     agb           <- sum(exp(beta0s + beta1s*log(sub_plot$dia_begin* 2.54)), na.rm = TRUE)
-  #     agb_Mg        <- agb * 1e-03 # kg to Mg
-  #     agb_Mg_plt    <- agb_Mg / (4*7.3152^2*pi) # Mg/m2
-  #     agb_Mg_ha_plt <- agb_Mg_plt / 1e-04  # Mg/m2 to Mg/ha
-  #     
-  #     
-  #     agb_correction = (agb_Mg_ha_plt_end - agb_Mg_ha_plt)*sf
-  #     
-  #     # rescaled_mean_dbhs[p] <- mean(sub_plot$dia_begin * 2.54, na.rm=TRUE)
-  #     # rescaled_mean_dens[p] <- sum(sub_plot$start1tpa / 0.404686, na.rm = TRUE)
-  #     # rescaled_mean_agbs[p] <- agb_Mg_ha_plt
-  #     rescaled_mean_dbhs[p] <- current_pnt[1] - dbh_correction
-  #     rescaled_mean_dens[p] <- current_pnt[2] - den_correction
-  #     rescaled_mean_agbs[p] <- current_pnt[3] - agb_correction
-  #   }
-  #   
-  #   #corrected_mat <- matrix(apply(cbind(rescaled_mean_dbhs, rescaled_mean_dens, rescaled_mean_agbs), 2, mean), ncol=3)
-  #   corrected_mat <- cbind(rescaled_mean_dbhs, rescaled_mean_dens, rescaled_mean_agbs)
-  #   
-  #   return(corrected_mat)
-  # }
+  correct_cumsum = cbind(correct_cumsum, corrected_iter)
+}
+
+corrected_ab = data.frame(year=years, correct_cumsum)
+corrected_ab_melt = melt(corrected_ab, id.vars=c('year'), factorsAsStrings = FALSE)
+
+agbCI_f <- apply(corrected_ab[,2:ncol(corrected_ab)], 1, function(x) quantile(x,  c(0.025, 0.5, 0.975), na.rm=TRUE))
+# agbCI_f <- do.call("cbind", y.list)
+#agbCI_f <- apply(esm_correction, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
+agb_poly <- 1:dim(agbCI_f)[2]
+
+pal_tronly <-lapply(frec, function(x) x[,3])
+pal_tronly <- do.call("rbind", pal_tronly)
+and_CI_f <- apply(pal_tronly, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
+
+pal_tr_cen <-lapply(crec, function(x) x[,3])
+pal_tr_cen <- do.call("rbind", pal_tr_cen)
+and_CI <- apply(pal_tr_cen, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
+
+
+# pdf('../../figures/FADING-METHOD2-BIOMASS.pdf', width=12, height=10)
+png('../../figures/FADING-METHOD2-BIOMASS.png', width=620, height=480)
+plot(agbCI_f[1,], ylim = c(100,  320), xaxt = "n",lwd = 3, xlab = "Years", ylab = "AB (Mg/ha)",
+     main = "HF - site 1", type = "n", cex.lab=1.5)
+polygon(c(agb_poly, rev(agb_poly)),c((agbCI_f[3,]), rev(agbCI_f[1,])),col=adjustcolor("lightgray",alpha.f=0.5),border="darkgray", lwd =2)
+lines(agbCI_f[2,], col = "darkgray", lwd=2)
+polygon(c(agb_poly, rev(agb_poly)),c((and_CI_f[3,]), rev(and_CI_f[1,])),col=adjustcolor("lightpink",alpha.f=0.5),border="lightpink", lwd =2)
+lines(and_CI_f[2,], col = "lightpink", lwd=2)
+polygon(c(agb_poly, rev(agb_poly)),c((and_CI[3,]), rev(and_CI[1,])),col=adjustcolor("lightblue",alpha.f=0.5),border="lightblue3", lwd =2)
+lines(and_CI[2,], col = "lightblue3", lwd=2)
+legend("topright", col = c("darkgray", "lightblue3","lightpink"),
+       legend = c("corrected", "Raw + Census","Raw"),lty=1, lwd=3, cex=0.7)
+yr <- 2012:(years[y])
+axis(1, at=agb_poly, labels=yr)
+dev.off()
+
+
+######################################################################################################################################
+## METHOD 3: If correction is positive, draw correction from uniform from 0 to correction
+## 
+######################################################################################################################################
+
+# now try with instead of binom, drawing from uniform from 0 to change
+correct_cumsum <- matrix(NA, nrow=length(years), ncol=0)
+for (iter in 1:length(correct)){
+  corrected_iter = matrix(NA, nrow=length(years), ncol=nneigh)
+  sum_correction_iter = matrix(0, nrow=length(years), ncol=nneigh)
+  for (y in 1:(length(years))){
+    current_pnt = frec[[iter]][y,3]
+    previous_pnt = frec[[iter]][y-1,3]
+    
+    if (y == 1){
+      corrected_iter[y,1:nneigh] = rep(current_pnt, nneigh)
+    } else {
+      
+      # the actual correction
+      for (neigh in 1:nneigh){
+        sum_correction = 0
+        
+        # add_success = rbinom(1, 1, 0.5)
+        # if (add_success){
+        #   add_back = ifelse(correct[[iter]][[j]][neigh,3]>0, correct[[iter]][[j]][neigh,3], 0)
+        # } else {
+        #   add_back = 0
+        # }
+        if (correct[[iter]][[j]][neigh,3]>0){
+          add_back = runif(1, min=0, max=correct[[iter]][[j]][neigh,3])
+        } else {
+          add_back=0
+        }
+        
+        sum_correction_iter[y,neigh] = sum_correction_iter[y-1,neigh] + add_back
+        
+        corrected_iter[y,neigh] = current_pnt + sum_correction_iter[y,neigh]
+        
+      }
+    }
+    
+  }
+  correct_cumsum = cbind(correct_cumsum, corrected_iter)
+}
+
+corrected_ab = data.frame(year=years, correct_cumsum)
+corrected_ab_melt = melt(corrected_ab, id.vars=c('year'), factorsAsStrings = FALSE)
+
+agbCI_f <- apply(corrected_ab[,2:ncol(corrected_ab)], 1, function(x) quantile(x,  c(0.025, 0.5, 0.975), na.rm=TRUE))
+# agbCI_f <- do.call("cbind", y.list)
+#agbCI_f <- apply(esm_correction, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
+agb_poly <- 1:dim(agbCI_f)[2]
+
+pal_tronly <-lapply(frec, function(x) x[,3])
+pal_tronly <- do.call("rbind", pal_tronly)
+and_CI_f <- apply(pal_tronly, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
+
+pal_tr_cen <-lapply(crec, function(x) x[,3])
+pal_tr_cen <- do.call("rbind", pal_tr_cen)
+and_CI <- apply(pal_tr_cen, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
+
+
+# pdf('../../figures/FADING-METHOD3-BIOMASS.pdf', width=12, height=10)
+png('../../figures/FADING-METHOD3-BIOMASS.png', width=620, height=480)
+plot(agbCI_f[1,], ylim = c(100,  320), xaxt = "n",lwd = 3, xlab = "Years", ylab = "AB (Mg/ha)",
+     main = "HF - site 1", type = "n", cex.lab=1.5)
+polygon(c(agb_poly, rev(agb_poly)),c((agbCI_f[3,]), rev(agbCI_f[1,])),col=adjustcolor("lightgray",alpha.f=0.5),border="darkgray", lwd =2)
+lines(agbCI_f[2,], col = "darkgray", lwd=2)
+polygon(c(agb_poly, rev(agb_poly)),c((and_CI_f[3,]), rev(and_CI_f[1,])),col=adjustcolor("lightpink",alpha.f=0.5),border="lightpink", lwd =2)
+lines(and_CI_f[2,], col = "lightpink", lwd=2)
+polygon(c(agb_poly, rev(agb_poly)),c((and_CI[3,]), rev(and_CI[1,])),col=adjustcolor("lightblue",alpha.f=0.5),border="lightblue3", lwd =2)
+lines(and_CI[2,], col = "lightblue3", lwd=2)
+legend("topright", col = c("darkgray", "lightblue3","lightpink"),
+       legend = c("corrected", "Raw + Census","Raw"),lty=1, lwd=3, cex=0.7)
+yr <- 2012:(years[y])
+axis(1, at=agb_poly, labels=yr)
+dev.off()
+
+######################################################################################################################################
+## apply cumulative sum correction
+######################################################################################################################################
+
+
+# # works
+# correct_cumsum <- matrix(NA, nrow=length(years), ncol=0)
+# for (iter in 1:length(correct)){
+#   corrected_iter = matrix(NA, nrow=length(years), ncol=nneigh)
+#   for (i in 1:(length(years))){
+#     current_pnt = frec[[iter]][i,3]
+#     previous_pnt = frec[[iter]][i-1,3]
+# 
+#     if (i == 1){
+#       corrected_iter[i,1:nneigh] = rep(current_pnt, nneigh)
+#     } else {
+#       if (sign(correct[[iter]][[i-1]][1,3])==1){
+#         sum_correction = 0
+#         for (j in (i-1):1){
+#           if (sign(correct[[iter]][[j]][,3]) ==1){
+#             sum_correction = sum_correction + correct[[iter]][[j]][,3]
+#           }
+#         }
+#         corrected_iter[i,1:nneigh] = current_pnt + sum_correction
+#       } else {
+#         corrected_iter[i,1:nneigh] = NA
+#       }
+#     }
+# 
+#   }
+#   correct_cumsum = cbind(correct_cumsum, corrected_iter)
+# }
+
+library(reshape2)
+corrected_ab = data.frame(year=years, correct_cumsum)
+
+
+corrected_ab_melt = melt(corrected_ab, id.vars=c('year'), factorsAsStrings = FALSE)
+
+
+
+
+
+agbCI_f <- apply(corrected_ab[,2:ncol(corrected_ab)], 1, function(x) quantile(x,  c(0.025, 0.5, 0.975), na.rm=TRUE))
+# agbCI_f <- do.call("cbind", y.list)
+#agbCI_f <- apply(esm_correction, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
+agb_poly <- 1:dim(agbCI_f)[2]
+
+pal_tronly <-lapply(frec, function(x) x[,3])
+pal_tronly <- do.call("rbind", pal_tronly)
+and_CI_f <- apply(pal_tronly, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
+
+pal_tr_cen <-lapply(crec, function(x) x[,3])
+pal_tr_cen <- do.call("rbind", pal_tr_cen)
+and_CI <- apply(pal_tr_cen, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
+
+
+# pdf('../../figures/correct_biomass_cumsum.pdf')
+plot(agbCI_f[1,], ylim = c(100,  320), xaxt = "n",lwd = 3, xlab = "Years", ylab = "AB (Mg/ha)",
+     main = "HF - site 1", type = "n", cex.lab=1.5)
+polygon(c(agb_poly, rev(agb_poly)),c((agbCI_f[3,]), rev(agbCI_f[1,])),col=adjustcolor("lightgray",alpha.f=0.5),border="darkgray", lwd =2)
+lines(agbCI_f[2,], col = "darkgray", lwd=2)
+polygon(c(agb_poly, rev(agb_poly)),c((and_CI_f[3,]), rev(and_CI_f[1,])),col=adjustcolor("lightpink",alpha.f=0.5),border="lightpink", lwd =2)
+lines(and_CI_f[2,], col = "lightpink", lwd=2)
+polygon(c(agb_poly, rev(agb_poly)),c((and_CI[3,]), rev(and_CI[1,])),col=adjustcolor("lightblue",alpha.f=0.5),border="lightblue3", lwd =2)
+lines(and_CI[2,], col = "lightblue3", lwd=2)
+legend("topright", col = c("darkgray", "lightblue3","lightpink"),
+       legend = c("corrected", "Raw + Census","Raw"),lty=1, lwd=3, cex=0.7)
+yr <- 2012:(years[y])
+axis(1, at=agb_poly, labels=yr)
+# dev.off()
+
+
+
+## not sure if this works
+corrected_ab <- matrix(NA, nrow=length(years), ncol=0)
+for (iter in 1:length(correct)){
+  corrected_iter = matrix(NA, nrow=length(years), ncol=nneigh)
+  for (i in 1:(length(years))){
+    current_pnt = frec[[iter]][i,3]
+    previous_pnt = frec[[iter]][i-1,3]
+    
+    if (i == 1){
+      corrected_iter[i,1:nneigh] = rep(current_pnt, nneigh)
+    } else {
+      if(sign(correct[[iter]][[i-1]][1,3])==1){
+        corrected_iter[i,1:nneigh] = current_pnt + correct[[iter]][[i-1]][,3]
+      } else {
+        corrected_iter[i,1:nneigh] = NA
+      }
+    }
+    
+  }
+  corrected_ab = cbind(corrected_ab, corrected_iter)
+}
+
+corrected_ab = data.frame(year=years, corrected_ab)
+
+
+library(reshape2)
+corrected_ab_melt = melt(corrected_ab, id.vars=c('year'), factorsAsStrings = FALSE)
+
+agbCI_f <- apply(corrected_ab[,2:ncol(corrected_ab)], 1, function(x) quantile(x,  c(0.025, 0.5, 0.975), na.rm=TRUE))
+# agbCI_f <- do.call("cbind", y.list)
+#agbCI_f <- apply(esm_correction, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
+agb_poly <- 1:dim(agbCI_f)[2]
+
+pal_tronly <-lapply(frec, function(x) x[,3])
+pal_tronly <- do.call("rbind", pal_tronly)
+and_CI_f <- apply(pal_tronly, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
+
+pal_tr_cen <-lapply(crec, function(x) x[,3])
+pal_tr_cen <- do.call("rbind", pal_tr_cen)
+and_CI <- apply(pal_tr_cen, 2, quantile, c(0.025, 0.5, 0.975), na.rm=TRUE)
+
+
+pdf('../../figures/correct_biomass.pdf')
+plot(agbCI_f[1,], ylim = c(50,  400), xaxt = "n",lwd = 3, xlab = "Years", ylab = "AB (Mg/ha)",
+     main = "HF - site 1", type = "n", cex.lab=1.5)
+polygon(c(agb_poly, rev(agb_poly)),c((agbCI_f[3,]), rev(agbCI_f[1,])),col=adjustcolor("lightgray",alpha.f=0.5),border="darkgray", lwd =2)
+lines(agbCI_f[2,], col = "darkgray", lwd=2)
+polygon(c(agb_poly, rev(agb_poly)),c((and_CI_f[3,]), rev(and_CI_f[1,])),col=adjustcolor("lightpink",alpha.f=0.5),border="lightpink", lwd =2)
+lines(and_CI_f[2,], col = "lightpink", lwd=2)
+polygon(c(agb_poly, rev(agb_poly)),c((and_CI[3,]), rev(and_CI[1,])),col=adjustcolor("lightblue",alpha.f=0.5),border="lightblue3", lwd =2)
+lines(and_CI[2,], col = "lightblue3", lwd=2)
+legend("topright", col = c("darkgray", "lightblue3","lightpink"),
+       legend = c("corrected", "Raw + Census","Raw"),lty=1, lwd=3, cex=0.7)
+yr <- 2012:(years[y])
+axis(1, at=agb_poly, labels=yr)
+dev.off()
